@@ -12,7 +12,7 @@ const connection = { id: "7f0b4271-bf76-4de0-8e76-ddd1b0e5ee13", display_name: "
 const model = { id: "5269bd6d-e31d-42e8-812f-989be2bb3e57", display_name: "Model", provider: "fireworks" };
 const workspace = { id: "d215125b-4896-4ca4-a36f-aefdeea095fb", provider: "exe", status: "running", created_at: "2026-10-14" };
 
-async function fixture(t, { image = true, workspaces = [], failCreate = false, interruptAttach = false, removeCliBeforeAttach = false, signedIn = true, local = false, models = [model], connections = [connection], defaults = {} } = {}) {
+async function fixture(t, { image = true, workspaces = [], failCreate = false, failAttach = false, interruptAttach = false, removeCliBeforeAttach = false, signedIn = true, local = false, models = [model], connections = [connection], defaults = {} } = {}) {
   const directory = mkdtempSync(join(tmpdir(), "magicmtn-extension-"));
   const log = join(directory, "calls.jsonl");
   writeFileSync(log, "");
@@ -36,7 +36,15 @@ if(args[0]==='--local')args=args.slice(1);
 let result;
 if(args[0]==='mcp' && args[1]==='tools')result=[{name:'sandbox_list',description:'List local sandboxes',inputSchema:{type:'object',properties:{}}},{name:'sandbox_create',description:'Create local sandbox',inputSchema:{type:'object',properties:{image:{type:'string'}}}}];
 if(args[0]==='mcp' && args[1]==='call'){const input=JSON.parse(fs.readFileSync(0,'utf8'));const value=args[2]==='sandbox_list'?JSON.parse(fs.readFileSync(${JSON.stringify(workspacesPath)},'utf8')):${JSON.stringify(workspace)};result={content:[{type:'text',text:JSON.stringify(value)}],details:{}};}
-if(args[1]==='attach'){if(${interruptAttach})process.kill(process.pid,'SIGTERM');process.exit(0)}
+if(args[1]==='attach'){
+  if(${interruptAttach})process.kill(process.pid,'SIGTERM');
+  if(${failAttach}){
+    console.error('Connecting workspace…');
+    console.error('Error: server returned 400 Bad Request: sandbox is not available');
+    process.exit(1);
+  }
+  process.exit(0);
+}
 if(args[1]==='connect')result={id:'pi-connection'};
 if(['status','stop','restart'].includes(args[1]))result={state:'running',generation:2};
 if(args[1]==='account')result=JSON.parse(fs.readFileSync(${JSON.stringify(accountPath)},'utf8'));
@@ -273,6 +281,17 @@ test("an interrupted attach reports the attach operation without terminal output
   assert.deepEqual(f.calls().at(-2), ["pi", "attach", workspace.id]);
   assert.deepEqual(f.calls().at(-1), ["pi", "report-error", "--operation", "attach"]);
   assert.match(f.notices.at(-1).message, /magic was interrupted/);
+});
+test("an attach rejected by the server shows the CLI error after restoring Pi", async (t) => {
+  const f = await fixture(t, { workspaces: [workspace], failAttach: true });
+  f.choices.push(0, 0);
+  await f.command.handler("view", f.ctx);
+  assert.deepEqual(f.terminalEvents, ["stop", "start"]);
+  assert.deepEqual(f.calls().at(-1), ["pi", "attach", workspace.id]);
+  assert.deepEqual(f.notices.at(-1), {
+    message: `Could not connect to workspace ${workspace.id}. server returned 400 Bad Request: sandbox is not available`,
+    type: "error",
+  });
 });
 test("a missing magic executable shows the launch error", async (t) => {
   const f = await fixture(t, { removeCliBeforeAttach: true });

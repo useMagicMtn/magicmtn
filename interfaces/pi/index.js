@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
+import { stripVTControlCharacters } from "node:util";
 import { providerLabel } from "./workspace.js";
 import { BACK, pickDefault } from "./picker.js";
 import { createInferenceProvider, uniqueModels } from "./inference.js";
@@ -94,13 +95,18 @@ async function selectModel(ctx, catalog, states) {
 }
 
 async function terminal(ctx, args) {
+  const attaching = args[0] === "pi" && args[1] === "attach";
   let result;
   const connected = await ctx.ui.custom((tui, _theme, _keys, done) => {
     tui.stop();
     try {
       // The child owns the real terminal. No RPC UI emulation or duplicate agent
       // loop; after disconnect, pi restores its original local interface.
-      result = spawnSync(executable(), args, { stdio: "inherit", env: consumerEnvironment() });
+      result = spawnSync(executable(), args, {
+        stdio: attaching ? ["inherit", "inherit", "pipe"] : "inherit",
+        encoding: "utf8",
+        env: consumerEnvironment(),
+      });
     } finally {
       tui.start();
       tui.requestRender(true);
@@ -112,7 +118,18 @@ async function terminal(ctx, args) {
     const detail = result.error?.code === "ENOENT" ? "Reinstall the magic CLI and run magic pi install to refresh its saved path."
       : result.error?.message || `magic was interrupted by ${result.signal}`;
     const error = new Error(detail);
-    error.attachFailure = args[0] === "pi" && args[1] === "attach";
+    error.attachFailure = attaching;
+    throw error;
+  }
+  if (attaching && !connected) {
+    // Pi redraws over the child’s terminal after attach exits. Preserve the
+    // CLI error in Pi while leaving the remote PTY on inherited stdout.
+    const diagnostic = stripVTControlCharacters(result.stderr || "")
+      .split(/\r?\n/).find((line) => line.startsWith("Error: "));
+    const detail = diagnostic?.slice(7).replace(/[\x00-\x1f\x7f-\x9f]/g, "").trim().slice(0, 500)
+      || `magic pi attach exited with status ${result.status}`;
+    const error = new Error(`Could not connect to workspace ${args[2]}. ${detail}`);
+    error.reported = true; // The CLI reports its own Pi command failures.
     throw error;
   }
   return connected;
@@ -303,12 +320,10 @@ export default function magicmtn(pi) {
             workspace = await magic(["pi", "create", ...inference]);
           }
           ctx.ui.notify(`Connecting workspace ${workspace.id}. Ctrl+] returns here; the sandbox stays running.`, "info");
-          const connected = await terminal(ctx, ["pi", "attach", workspace.id]);
-          ctx.ui.setStatus("magicmtn-workspace", `Local pi · disconnected from MagicMtn computer ${workspace.id.slice(0, 8)}`);
-          if (!connected) {
-            const error = new Error(`Workspace connection ended with an error. Resume workspace ${workspace.id} through /magic.`);
-            error.reported = true;
-            throw error;
+          try {
+            await terminal(ctx, ["pi", "attach", workspace.id]);
+          } finally {
+            ctx.ui.setStatus("magicmtn-workspace", `Local pi · disconnected from MagicMtn computer ${workspace.id.slice(0, 8)}`);
           }
           return;
         } catch (error) {
