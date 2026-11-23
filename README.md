@@ -26,6 +26,17 @@ magic --version
 
 Cargo installs the executable into `~/.cargo/bin` by default. Add that directory to your PATH if your shell cannot find `magic`.
 
+## Install with Nix
+
+Run the CLI directly or install it into your profile using Nix flakes.
+
+```sh
+nix run github:useMagicMtn/magicmtn -- --version
+nix profile install github:useMagicMtn/magicmtn
+```
+
+To add `magic` to a NixOS or Home Manager flake configuration, add `github:useMagicMtn/magicmtn` to your flake inputs and reference `inputs.magicmtn.packages.${pkgs.stdenv.hostPlatform.system}.default`, or apply `inputs.magicmtn.overlays.default` and install `pkgs.magicmtn`.
+
 ## Run a local sandbox
 
 On Apple silicon, use Apple Container and the built-in SQLite server to create, execute a command in, and terminate a sandbox. Follow the [local quickstart](docs/local-server.md).
