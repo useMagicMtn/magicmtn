@@ -17,6 +17,12 @@ Distributed inference and sandboxed compute platform for agents. The open-source
 - **Provider SDK** — Build and package your own inference or compute providers in Rust.
 - **Agent integrations** — Connect [Pi](https://pi.dev/) and OpenCode to MagicMtn workspaces, or expose sandbox tools to other MCP clients.
 
+## Demo
+
+https://github.com/user-attachments/assets/e42832f4-cd24-4d25-9cae-eacd053c44f1
+
+*Launch a cloud agent from Pi, disconnect while it keeps running, then SSH into the machine MagicMtn provisioned.*
+
 ## Getting Started
 
 ### Install the MagicMtn CLI
@@ -82,16 +88,6 @@ pi
 ```
 
 In Pi, use `/login` to connect your inference provider and `/model` to choose a model. Ask Pi to use `magic_sandbox_create` with provider `modal` and the same digest-pinned image reference, then run `pwd` using `magic_sandbox_exec`.
-
-## Demo
-
-https://github.com/user-attachments/assets/e42832f4-cd24-4d25-9cae-eacd053c44f1
-
-To replay the [terminal recording](cli-pi-demo.cast), run this from the repository root.
-
-```sh
-asciinema play cli-pi-demo.cast
-```
 
 ## Install from source
 
