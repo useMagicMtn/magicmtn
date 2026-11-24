@@ -113,6 +113,7 @@ async fn ambiguous_timeout_kills_connection_without_replay() {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("provider");
     let manifest = magicmtn_sdk::plugin::ProviderManifest {
+        credential: None,
         manifest_version: 1,
         provider_version: "0.1.0".into(),
         capabilities: magicmtn_sdk::plugin::Capabilities::inference(vec!["echo".into()]),

@@ -8,6 +8,7 @@ description = "Persistent RPC runner and optional installation host for MagicMtn
 
 [dependencies]
 anyhow = "1.0.86"
+zeroize = "1.8"
 magicmtn-sdk = { version = "0.1.0", path = "../magicmtn-sdk" }
 serde_json = "1.0.120"
 

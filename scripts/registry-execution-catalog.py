@@ -7,6 +7,7 @@ host runtimes, create VMs, or change any server configuration.
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import subprocess
 import tarfile
@@ -41,12 +42,24 @@ def main():
                 assert f"{metadata['os']}-{metadata['arch']}"==platform
                 assert hashlib.sha256(binary).hexdigest()==metadata['sha256']==artifact['executable_sha256']
                 executable=root/'provider'; executable.write_bytes(binary); executable.chmod(0o755)
-                request=json.dumps(dict(id=1,protocol_version=1,provider=name,operation=dict(name='describe')))+'\n'
+                protocol = metadata['protocol_version']
+                assert protocol in (1, 2)
+                frame = dict(id=1, protocol_version=protocol, provider=name)
+                if protocol == 2:
+                    frame.update(credential=None, verify_account=False)
+                else:
+                    frame['operation'] = dict(name='describe')
+                request = json.dumps(frame) + '\n'
                 command=[str(executable)]
                 if metadata['os']=='linux':
                     arch={'aarch64':'arm64','x86_64':'amd64'}[metadata['arch']]
                     command=['podman','run','--rm','-i','--platform','linux/'+arch,'--network','none','-v',f'{root}:/adapter:ro','docker.io/library/alpine:3.22','/adapter/provider']
-                response=json.loads(subprocess.check_output(command,input=request,text=True,timeout=120))
+                environment = None if metadata['os'] == 'linux' else {
+                    'PATH': os.defpath, 'HOME': str(root), 'TMPDIR': str(root)
+                }
+                response = json.loads(subprocess.check_output(
+                    command, input=request, text=True, timeout=120, env=environment
+                ))
                 manifest=response['outcome']['ok']['value']
                 assert manifest['provider_version']==version
                 releases.append(dict(package=metadata,manifest=manifest,active=True,executable=None,

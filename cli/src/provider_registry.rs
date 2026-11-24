@@ -1,6 +1,7 @@
 //! Provider installation from the MagicMtn Registry or local packages.
 use anyhow::{ensure, Context, Result};
 use magicmtn_provider_framework::host::{Package, Registry};
+use magicmtn_sdk::plugin::{CREDENTIAL_PROTOCOL_VERSION, PROTOCOL_VERSION};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::{
@@ -125,7 +126,10 @@ fn verify_package(bytes: &[u8], name: &str, version: &str, artifact: &Artifact) 
             && package.sha256 == artifact.executable_sha256
             && package.os == std::env::consts::OS
             && package.arch == std::env::consts::ARCH
-            && package.protocol_version == 1,
+            && matches!(
+                package.protocol_version,
+                PROTOCOL_VERSION | CREDENTIAL_PROTOCOL_VERSION
+            ),
         "provider package does not match its Registry identity"
     );
     Ok(())
@@ -148,8 +152,7 @@ pub(crate) async fn install(name: &str) -> Result<()> {
     let bytes = download(&client, &url, 64 * 1024 * 1024).await.context(
         "downloading the current Registry release; retry installation if a release changed",
     )?;
-    verify_package(&bytes, name, &provider.version, artifact)?;
-    install_package(&bytes).await
+    install_package(&bytes, Some((provider, artifact))).await
 }
 
 pub(crate) async fn install_file(file: &Path) -> Result<()> {
@@ -163,15 +166,13 @@ pub(crate) async fn install_file(file: &Path) -> Result<()> {
         bytes.len() <= 64 * 1024 * 1024,
         "provider package exceeds 64 MiB"
     );
-    install_package(&bytes).await
+    install_package(&bytes, None).await
 }
 
-async fn install_package(bytes: &[u8]) -> Result<()> {
+async fn install_package(bytes: &[u8], source: Option<(&Provider, &Artifact)>) -> Result<()> {
     let root = crate::configuration::directory()?.join("providers");
     let _lock = crate::configuration::lock_provider_store(&root)?;
-    let registry = Registry::new(root.clone())?;
-    let installed = registry.install(bytes).await?;
-    crate::configuration::write_catalog(&registry, &root)?;
+    let installed = install_at(&root, bytes, source).await?;
     println!(
         "Installed {} {} ({}-{})",
         installed.package.name,
@@ -183,6 +184,79 @@ async fn install_package(bytes: &[u8]) -> Result<()> {
     if installed.package.name == "apple-container" {
         crate::images::ensure_canonical(&installed.package.name)?;
     }
+    Ok(())
+}
+
+async fn install_at(
+    root: &Path,
+    bytes: &[u8],
+    source: Option<(&Provider, &Artifact)>,
+) -> Result<magicmtn_provider_framework::host::Installed> {
+    if let Some((provider, artifact)) = source {
+        verify_package(bytes, &provider.name, &provider.version, artifact)?;
+    }
+    let registry = Registry::new(root.to_owned())?;
+    let installed = registry.install(bytes).await?;
+    if let Some((provider, artifact)) = source {
+        let directory = root.join(&provider.name).join(&provider.version);
+        // Registry::install also verifies a resident binary before reenrollment.
+        let mut receipt = tempfile::NamedTempFile::new_in(&directory)?;
+        serde_json::to_writer(
+            &mut receipt,
+            &serde_json::json!({
+                "registry": ORIGIN,
+                "pin": installed.pin(),
+                "archive_sha256": artifact.sha256,
+            }),
+        )?;
+        receipt.persist(directory.join("registry-origin.json"))?;
+    }
+    crate::configuration::write_catalog(&registry, root)?;
+    Ok(installed)
+}
+
+pub(crate) async fn configure(
+    api: &crate::Api,
+    name: &str,
+    secret_string: Option<String>,
+    secret_file: Option<&Path>,
+) -> Result<()> {
+    const MAX_BUNDLE_BYTES: u64 = 65_536;
+    let root = crate::configuration::directory()?.join("providers");
+    let installed = Registry::new(root)?.registry_release(name)?;
+    ensure!(
+        installed.manifest.credential.is_some(),
+        "provider uses workload identity or has no credential fields"
+    );
+    let bytes = if let Some(path) = secret_file {
+        let mut bytes = Vec::new();
+        std::fs::File::open(path)
+            .context("opening provider credential file")?
+            .take(MAX_BUNDLE_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .context("reading provider credential file")?;
+        bytes
+    } else {
+        secret_string
+            .context("provide a JSON credential string or file")?
+            .into_bytes()
+    };
+    ensure!(
+        bytes.len() as u64 <= MAX_BUNDLE_BYTES,
+        "provider credential exceeds the size limit"
+    );
+    let url = api.base.join(&format!("v1/providers/{name}/credential"))?;
+    let response = api
+        .authenticated(api.client.put(url))
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .body(bytes)
+        .send()
+        .await
+        .context("could not reach the local MagicMtn server")?;
+    if !response.status().is_success() {
+        anyhow::bail!("provider configuration failed: {}", response.text().await?);
+    }
+    println!("Provider {name} ready.");
     Ok(())
 }
 
@@ -274,6 +348,98 @@ mod tests {
             assert!(!valid_name(name));
         }
     }
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn installation_records_origin_only_for_a_verified_registry_release() {
+        use magicmtn_sdk::plugin::{Capabilities, ProviderManifest};
+        use serde_json::json;
+
+        let manifest = ProviderManifest {
+            credential: None,
+            manifest_version: 1,
+            provider_version: "1.0.0".into(),
+            capabilities: Capabilities::sandbox(vec![]),
+        };
+        let description = json!({
+            "id": 1, "protocol_version": 1, "provider": "example",
+            "outcome": {"ok": {"kind": "description", "value": manifest}}
+        });
+        let executable = format!(
+            "#!/bin/sh\n\
+             test -n \"$HOME\" && test \"$HOME\" = \"$TMPDIR\" && test . -ef \"$HOME\" || exit 1\n\
+             IFS= read -r frame || exit 1\n\
+             printf '%s\\n' '{description}'\n\
+             IFS= read -r frame\n"
+        );
+        let package = Package {
+            name: "example".into(),
+            version: "1.0.0".into(),
+            protocol_version: 1,
+            os: std::env::consts::OS.into(),
+            arch: std::env::consts::ARCH.into(),
+            sha256: format!("{:x}", Sha256::digest(executable.as_bytes())),
+        };
+        let metadata = serde_json::to_vec(&package).unwrap();
+        let encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        let mut archive = tar::Builder::new(encoder);
+        for (name, contents) in [
+            ("package.json", metadata.as_slice()),
+            ("provider", executable.as_bytes()),
+            ("LICENSE", b"fixture".as_slice()),
+        ] {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(contents.len() as u64);
+            header.set_mode(0o755);
+            header.set_cksum();
+            archive.append_data(&mut header, name, contents).unwrap();
+        }
+        let bytes = archive.into_inner().unwrap().finish().unwrap();
+        let provider = Provider {
+            name: package.name.clone(),
+            description: "fixture".into(),
+            version: package.version.clone(),
+            platforms: BTreeMap::new(),
+        };
+        let artifact = Artifact {
+            sha256: format!("{:x}", Sha256::digest(&bytes)),
+            executable_sha256: package.sha256.clone(),
+        };
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        let release = root.join("example/1.0.0");
+        let receipt = release.join("registry-origin.json");
+
+        install_at(root, &bytes, None).await.unwrap();
+        assert!(!receipt.exists());
+        let registry = Registry::new(root.to_owned()).unwrap();
+        assert!(registry.registry_release("example").is_err());
+        let path = release.join("provider");
+        std::fs::write(&path, b"changed").unwrap();
+        assert!(install_at(root, &bytes, Some((&provider, &artifact)))
+            .await
+            .is_err());
+        assert!(!receipt.exists());
+        std::fs::write(&path, executable).unwrap();
+        let installed = install_at(root, &bytes, Some((&provider, &artifact)))
+            .await
+            .unwrap();
+        assert_eq!(
+            registry.registry_release("example").unwrap().pin(),
+            installed.pin()
+        );
+        for invalid in ["provider-example", "Example", "../example"] {
+            assert!(registry.registry_release(invalid).is_err());
+        }
+        let recorded: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(receipt).unwrap()).unwrap();
+        assert_eq!(
+            recorded,
+            json!({
+                "registry": ORIGIN, "pin": installed.pin(), "archive_sha256": artifact.sha256
+            })
+        );
+    }
+
     #[tokio::test]
     async fn uninstall_removes_all_versions_and_preserves_other_providers() {
         use magicmtn_sdk::plugin::{Capabilities, ProviderManifest};
@@ -296,6 +462,7 @@ mod tests {
                 sha256: format!("{:x}", Sha256::digest(b"unused")),
             };
             let manifest = ProviderManifest {
+                credential: None,
                 manifest_version: 1,
                 provider_version: version.into(),
                 capabilities: Capabilities::sandbox(vec![]),
@@ -338,7 +505,7 @@ mod tests {
             .unwrap();
         runner.try_lock_shared().unwrap();
         assert!(crate::configuration::lock_provider_store(directory.path()).is_err());
-        drop(runner);
+        runner.unlock().unwrap();
         assert!(crate::configuration::lock_provider_store(directory.path()).is_ok());
     }
 }

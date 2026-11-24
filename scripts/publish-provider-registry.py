@@ -33,7 +33,7 @@ def inspect_package(path):
             raise ValueError('invalid package entry type or size')
         manifest = json.load(archive.extractfile('package.json'))
         binary = archive.extractfile('provider').read()
-        if manifest['protocol_version'] != 1 or digest(binary) != manifest['sha256']:
+        if manifest['protocol_version'] not in (1, 2) or digest(binary) != manifest['sha256']:
             raise ValueError('invalid protocol or executable digest')
         if not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?', manifest['version']):
             raise ValueError('invalid version')

@@ -279,6 +279,13 @@ pub async fn create_record(
         return Ok(saved);
     }
     let scope = format!("sandbox:{id}");
+    let prepared =
+        crate::provider_connections::admit_credential(&s.registry, &binding).map_err(|_| {
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "provider credential unavailable".into(),
+            )
+        })?;
     let mut metadata =
         json!({"_magicmtn_connection":binding,"_magicmtn_provider":pin,"_magicmtn_scope":scope});
     if let Some(workspace) = &workspace {
@@ -313,7 +320,7 @@ pub async fn create_record(
         #[cfg(feature = "sqlite")]
         Store::Sqlite(_) => {}
     }
-    let result = crate::provider_connections::dispatch_store(
+    let result = crate::provider_connections::dispatch_prepared(
         &s.store,
         &s.registry,
         &binding,
@@ -324,10 +331,21 @@ pub async fn create_record(
         },
         Duration::from_secs(120),
         false,
+        prepared,
     )
     .await;
     let mut sandbox = match result {
         Ok(ProviderValue::Sandbox(sandbox)) => sandbox,
+        Err(error) if error.is::<crate::provider_connections::CredentialUnavailable>() => {
+            s.store
+                .failure(id, "failed", "provider credential unavailable")
+                .await
+                .map_err(failed)?;
+            return Err((
+                StatusCode::SERVICE_UNAVAILABLE,
+                "provider credential unavailable".into(),
+            ));
+        }
         other => {
             s.store
                 .failure(id, "uncertain", "create outcome uncertain; do not replay")

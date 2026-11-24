@@ -83,7 +83,11 @@ impl Database {
                 manifest: release.manifest.clone(),
                 configuration,
                 credential_mode: "managed".into(),
-                credential_ref: Some(format!("local:{name}")),
+                credential_ref: Some(if release.manifest.credential.is_some() {
+                    format!("provider-{name}")
+                } else {
+                    format!("local:{name}")
+                }),
                 runner_id: None,
             };
             // Apply startup settings and provider upgrades to future sandboxes.
@@ -203,12 +207,18 @@ impl Database {
             binding.organization_id == self.id && (cleanup || status == "enabled"),
             "connection disabled or wrong installation"
         );
+        let prefix = if binding.manifest.credential.is_some() {
+            "provider-"
+        } else {
+            "local:"
+        };
         ensure!(
             binding.runner_id.is_none()
                 && binding
                     .credential_ref
                     .as_deref()
-                    .is_some_and(|r| r.starts_with("local:")),
+                    .and_then(|reference| reference.strip_prefix(prefix))
+                    == Some(binding.pin.name.as_str()),
             "local provider credential required"
         );
         Ok(())

@@ -232,6 +232,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "aws-sdk-secretsmanager"
+version = "1.120.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "832dc9d5dbd19c0ac6b24e21ef9f3e553695d0f3928de7134567407b3b7a447d"
+dependencies = [
+ "arc-swap",
+ "aws-credential-types",
+ "aws-runtime",
+ "aws-smithy-async",
+ "aws-smithy-http",
+ "aws-smithy-json",
+ "aws-smithy-observability",
+ "aws-smithy-runtime",
+ "aws-smithy-runtime-api",
+ "aws-smithy-schema",
+ "aws-smithy-types",
+ "aws-types",
+ "bytes",
+ "fastrand",
+ "http 1.5.0",
+ "regex-lite",
+ "tracing",
+]
+
+[[package]]
 name = "aws-sdk-sts"
 version = "1.119.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1907,6 +1932,7 @@ dependencies = [
  "anyhow",
  "aws-config",
  "aws-sdk-kms",
+ "aws-sdk-secretsmanager",
  "axum",
  "base64 0.22.1",
  "chrono",
@@ -1914,6 +1940,7 @@ dependencies = [
  "magicmtn-contracts",
  "magicmtn-provider-framework",
  "magicmtn-sdk",
+ "reqwest 0.12.28",
  "ring",
  "serde",
  "serde_json",
@@ -1947,6 +1974,7 @@ dependencies = [
  "tower",
  "tracing-subscriber",
  "uuid",
+ "zeroize",
 ]
 
 [[package]]
@@ -1963,6 +1991,7 @@ dependencies = [
  "tar",
  "tempfile",
  "tokio",
+ "zeroize",
 ]
 
 [[package]]
@@ -1972,6 +2001,7 @@ dependencies = [
  "anyhow",
  "serde",
  "serde_json",
+ "zeroize",
 ]
 
 [[package]]
@@ -3939,7 +3969,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

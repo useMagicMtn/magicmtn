@@ -1,8 +1,9 @@
 //! Shared persistent JSON RPC runner for independently packaged providers.
 use anyhow::{anyhow, bail, Context, Result};
 use magicmtn_sdk::plugin::{
-    Capabilities, ErrorCode, Operation, Outcome, ProviderError, ProviderManifest, Request,
-    Response, Value, MANIFEST_VERSION, PROTOCOL_VERSION,
+    Capabilities, CredentialSpec, CredentialValues, ErrorCode, Operation, Outcome, ProviderError,
+    ProviderManifest, ProviderStartupInput, Request, Response, Value, CREDENTIAL_PROTOCOL_VERSION,
+    MANIFEST_VERSION, PROTOCOL_VERSION,
 };
 use magicmtn_sdk::{
     BoxFuture, InferenceBackend, InferenceDeploymentBackend, SandboxBackend, SearchEngineBackend,
@@ -35,35 +36,167 @@ async fn serve<'a>(
     provider: &str,
     version: &str,
     capabilities: Capabilities,
-    mut dispatch: impl FnMut(Operation) -> BoxFuture<'a, Value>,
+    dispatch: impl FnMut(Operation) -> BoxFuture<'a, Value>,
 ) -> Result<()> {
+    let manifest = ProviderManifest {
+        credential: None,
+        manifest_version: MANIFEST_VERSION,
+        provider_version: version.into(),
+        capabilities,
+    };
+    serve_io(
+        &mut std::io::stdin().lock(),
+        &mut std::io::stdout().lock(),
+        provider,
+        PROTOCOL_VERSION,
+        &manifest,
+        dispatch,
+    )
+    .await
+}
+
+/// Start a credential-aware provider. A verification startup returns the stable
+/// upstream account identifier. Normal startup constructs the client without a
+/// separate verification request. Discovery runs without calling the initializer.
+pub async fn run_credentialed<D, F>(
+    provider: &str,
+    version: &str,
+    capabilities: Capabilities,
+    spec: CredentialSpec,
+    initialize: impl FnOnce(CredentialValues, bool) -> F,
+) -> Result<()>
+where
+    D: FnMut(Operation) -> BoxFuture<'static, Value>,
+    F: std::future::Future<Output = Result<(Option<String>, D)>>,
+{
+    spec.validate()?;
     let mut input = std::io::stdin().lock();
     let mut output = std::io::stdout().lock();
-    loop {
-        let mut bytes = Vec::new();
-        if input
-            .by_ref()
-            .take(MAX_MESSAGE_BYTES + 1)
-            .read_until(b'\n', &mut bytes)?
-            == 0
-        {
-            return Ok(());
+    let Some(bytes) = read_frame(&mut input)? else {
+        return Ok(());
+    };
+    let startup: ProviderStartupInput =
+        serde_json::from_slice(&bytes).map_err(|_| anyhow!("invalid provider startup frame"))?;
+    drop(bytes);
+    ensure_startup(&startup, provider)?;
+    let manifest = ProviderManifest {
+        credential: Some(spec),
+        manifest_version: MANIFEST_VERSION,
+        provider_version: version.into(),
+        capabilities,
+    };
+    let response = |outcome| Response {
+        id: startup.id,
+        protocol_version: CREDENTIAL_PROTOCOL_VERSION,
+        provider: provider.into(),
+        outcome,
+    };
+    let Some(credential) = startup.credential else {
+        return write_response(
+            &mut output,
+            &response(Outcome::Ok(Value::Description(manifest))),
+        );
+    };
+    let prepared = if manifest
+        .credential
+        .as_ref()
+        .unwrap()
+        .check_values(&credential)
+        .is_ok()
+    {
+        initialize(credential, startup.verify_account).await.ok()
+    } else {
+        None
+    };
+    match prepared {
+        Some((Some(account), _)) if startup.verify_account && !account.is_empty() => {
+            write_response(
+                &mut output,
+                &response(Outcome::Ok(Value::VerifiedAccount(account))),
+            )
         }
-        if bytes.len() as u64 > MAX_MESSAGE_BYTES || !bytes.ends_with(b"\n") {
-            bail!("invalid or oversized RPC frame");
+        Some((_, dispatch)) if !startup.verify_account => {
+            write_response(
+                &mut output,
+                &response(Outcome::Ok(Value::Description(manifest.clone()))),
+            )?;
+            serve_io(
+                &mut input,
+                &mut output,
+                provider,
+                CREDENTIAL_PROTOCOL_VERSION,
+                &manifest,
+                dispatch,
+            )
+            .await
         }
+        _ => write_response(
+            &mut output,
+            &response(Outcome::Error(ProviderError {
+                code: ErrorCode::Internal,
+                retryable: false,
+                message: "provider credential initialization failed".into(),
+            })),
+        ),
+    }
+}
+
+fn ensure_startup(startup: &ProviderStartupInput, provider: &str) -> Result<()> {
+    anyhow::ensure!(
+        startup.protocol_version == CREDENTIAL_PROTOCOL_VERSION
+            && startup.provider == provider
+            && startup.id == 1
+            && (!startup.verify_account || startup.credential.is_some()),
+        "provider startup protocol or identity mismatch"
+    );
+    Ok(())
+}
+
+fn read_frame(input: &mut impl BufRead) -> Result<Option<zeroize::Zeroizing<Vec<u8>>>> {
+    let mut bytes = zeroize::Zeroizing::new(Vec::new());
+    if input
+        .take(MAX_MESSAGE_BYTES + 1)
+        .read_until(b'\n', &mut bytes)?
+        == 0
+    {
+        return Ok(None);
+    }
+    anyhow::ensure!(
+        bytes.len() as u64 <= MAX_MESSAGE_BYTES && bytes.ends_with(b"\n"),
+        "invalid or oversized RPC frame"
+    );
+    Ok(Some(bytes))
+}
+
+fn write_response(output: &mut impl Write, response: &Response) -> Result<()> {
+    let bytes = serde_json::to_vec(response)?;
+    anyhow::ensure!(
+        (bytes.len() as u64) < MAX_MESSAGE_BYTES,
+        "provider result exceeds message limit"
+    );
+    output.write_all(&bytes)?;
+    output.write_all(b"\n")?;
+    output.flush()?;
+    Ok(())
+}
+
+async fn serve_io<'a>(
+    input: &mut impl BufRead,
+    output: &mut impl Write,
+    provider: &str,
+    protocol_version: u32,
+    manifest: &ProviderManifest,
+    mut dispatch: impl FnMut(Operation) -> BoxFuture<'a, Value>,
+) -> Result<()> {
+    while let Some(bytes) = read_frame(input)? {
         let request: Request = serde_json::from_slice(&bytes).context("invalid provider RPC")?;
-        if request.protocol_version != PROTOCOL_VERSION || request.provider != provider {
+        if request.protocol_version != protocol_version || request.provider != provider {
             bail!("provider protocol or identity mismatch");
         }
         let shutdown = matches!(request.operation, Operation::Shutdown);
-        let unsupported = !capabilities.supports(&request.operation);
+        let unsupported = !manifest.capabilities.supports(&request.operation);
         let result = match request.operation {
-            Operation::Describe => Ok(Value::Description(ProviderManifest {
-                manifest_version: MANIFEST_VERSION,
-                provider_version: version.into(),
-                capabilities: capabilities.clone(),
-            })),
+            Operation::Describe => Ok(Value::Description(manifest.clone())),
             Operation::Shutdown => Ok(Value::Done),
             _ if unsupported => Err(anyhow!("unsupported operation")),
             operation => dispatch(operation).await,
@@ -90,23 +223,20 @@ async fn serve<'a>(
                     }),
             ),
         };
-        let response = Response {
-            id: request.id,
-            protocol_version: PROTOCOL_VERSION,
-            provider: provider.into(),
-            outcome,
-        };
-        let bytes = serde_json::to_vec(&response)?;
-        if bytes.len() as u64 >= MAX_MESSAGE_BYTES {
-            bail!("provider result exceeds message limit");
-        }
-        output.write_all(&bytes)?;
-        output.write_all(b"\n")?;
-        output.flush()?;
+        write_response(
+            output,
+            &Response {
+                id: request.id,
+                protocol_version,
+                provider: provider.into(),
+                outcome,
+            },
+        )?;
         if shutdown {
-            return Ok(());
+            break;
         }
     }
+    Ok(())
 }
 pub async fn run_sandbox(
     provider: &str,

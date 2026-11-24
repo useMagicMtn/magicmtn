@@ -16,9 +16,9 @@ SOURCES = ROOT.parent
 OUT = ROOT / 'dist/registry/packages'
 
 
-def package(name, version, os_name, arch, executable, license_path):
+def package(name, version, os_name, arch, executable, license_path, protocol_version=1):
     payload = executable.read_bytes()
-    manifest = dict(name=name, version=version, protocol_version=1, os=os_name, arch=arch,
+    manifest = dict(name=name, version=version, protocol_version=protocol_version, os=os_name, arch=arch,
                     sha256=hashlib.sha256(payload).hexdigest())
     OUT.mkdir(parents=True, exist_ok=True)
     target = OUT / f'{name}-{version}-{os_name}-{arch}.tar.gz'
@@ -33,7 +33,9 @@ def package(name, version, os_name, arch, executable, license_path):
 
 def build_linux(name, arches):
     provider = SOURCES / f'provider-{name}'
-    version = tomllib.loads((provider / 'Cargo.toml').read_text())['package']['version']
+    metadata = tomllib.loads((provider / 'Cargo.toml').read_text())['package']
+    version = metadata['version']
+    protocol = metadata.get('metadata', {}).get('magicmtn', {}).get('protocol-version', 1)
     with tempfile.TemporaryDirectory(prefix='magic-registry-build-') as temporary:
         context = Path(temporary)
         source = context / 'provider'
@@ -68,7 +70,7 @@ FROM scratch
             for arch in arches:
                 binary = context / f'{name}-{arch}'
                 subprocess.run(['podman', 'cp', f'{container}:/{name}-{arch}', str(binary)], check=True)
-                package(name, version, 'linux', arch, binary, provider / 'LICENSE')
+                package(name, version, 'linux', arch, binary, provider / 'LICENSE', protocol)
         finally:
             subprocess.run(['podman', 'rm', container], check=True)
 
@@ -80,9 +82,11 @@ def main():
         executable = f'magicmtn-provider-{name}'
         provider = SOURCES / f'provider-{name}'
         subprocess.run(cargo_build, cwd=provider, check=True)
-        version = tomllib.loads((provider / 'Cargo.toml').read_text())['package']['version']
+        metadata = tomllib.loads((provider / 'Cargo.toml').read_text())['package']
+        version = metadata['version']
+        protocol = metadata.get('metadata', {}).get('magicmtn', {}).get('protocol-version', 1)
         package(name, version, 'macos', 'aarch64', provider / 'target/release' / executable,
-                provider / 'LICENSE')
+                provider / 'LICENSE', protocol)
         if name == 'aws':
             build_linux(name, ['x86_64', 'aarch64'])
     build_linux('firecracker', ['x86_64', 'aarch64'])

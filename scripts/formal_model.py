@@ -36,7 +36,7 @@ def tools_jar(path):
     return path.resolve()
 
 
-def check(java, jar, module, source, config, timeout, expected=None):
+def check(java, jar, module, source, config, timeout, expected=None, *, expected_action=None):
     with tempfile.TemporaryDirectory(prefix="magicmtn-tlc-") as directory:
         work = Path(directory)
         (work / f"{module}.tla").write_text(source)
@@ -48,7 +48,10 @@ def check(java, jar, module, source, config, timeout, expected=None):
             cwd=work, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True, timeout=timeout,
         )
-        if expected:
+        if expected_action:
+            passed = (result.returncode == 13 and
+                      f"Action property {expected_action} is violated." in result.stdout)
+        elif expected:
             # TLC's safety violation exit code is 12. Parser errors, runtime
             # errors, crashes, and timeouts must fail, never count as detection.
             passed = (result.returncode == 12 and
@@ -59,8 +62,8 @@ def check(java, jar, module, source, config, timeout, expected=None):
         if not passed:
             print(result.stdout, flush=True)
             raise RuntimeError(f"Unexpected TLC result (exit {result.returncode})")
-        if expected:
-            print(f"  Detected {expected}", flush=True)
+        if expected or expected_action:
+            print(f"  Detected {expected or expected_action}", flush=True)
         else:
             print(result.stdout, flush=True)
 

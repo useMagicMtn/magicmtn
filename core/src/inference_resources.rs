@@ -69,6 +69,17 @@ async fn create(State(s): State<ResourceState>, Json(mut body): Json<Create>) ->
     crate::public_providers::require(&binding.pin.name)?;
     // Provider names are globally distinct within a shared managed account.
     body.specification.name = format!("mm-{}", body.idempotency_key.simple());
+    let scope = format!("inference:{}", body.idempotency_key);
+    let store: crate::sandbox_storage::Store = s.pool.clone().into();
+    let prepared = match provider_connections::admit_credential(&s.registry, &binding) {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            let saved = sqlx::query_scalar("SELECT to_jsonb(r) FROM inference_resources r WHERE id=$1 AND connection_id=$2 AND specification=$3")
+                .bind(body.idempotency_key).bind(binding.connection_id).bind(json!(body.specification))
+                .fetch_optional(&s.pool).await.map_err(failure)?;
+            return saved.map(Json).ok_or_else(|| failure(error));
+        }
+    };
     let row=sqlx::query("INSERT INTO inference_resources(id,organization_id,connection_id,binding,resource_name,specification) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING RETURNING id")
         .bind(body.idempotency_key).bind(binding.organization_id).bind(binding.connection_id).bind(json!(binding))
         .bind(&body.specification.name).bind(json!(body.specification)).fetch_optional(&s.pool).await.map_err(failure)?;
@@ -77,16 +88,17 @@ async fn create(State(s): State<ResourceState>, Json(mut body): Json<Create>) ->
             .bind(body.idempotency_key).bind(binding.connection_id).bind(json!(body.specification)).fetch_one(&s.pool).await.map_err(failure)?;
         return Ok(Json(saved));
     }
-    let result = provider_connections::dispatch(
-        &s.pool,
+    let result = provider_connections::dispatch_prepared(
+        &store,
         &s.registry,
         &binding,
-        &format!("inference:{}", body.idempotency_key),
+        &scope,
         Operation::InferenceDeploymentCreate {
             spec: body.specification,
         },
         Duration::from_secs(120),
         false,
+        prepared,
     )
     .await;
     save(&s, body.idempotency_key, result).await
@@ -114,6 +126,8 @@ async fn change(
         "delete" => Operation::InferenceDeploymentDelete { resource },
         _ => return Err(failure("unknown transition")),
     };
+    let prepared =
+        provider_connections::admit_credential(&s.registry, &binding).map_err(failure)?;
     if operation != "status" {
         let allowed = match operation.as_str() {
             "start" => vec!["stopped"],
@@ -139,14 +153,15 @@ async fn change(
             ));
         }
     }
-    let result = provider_connections::dispatch(
-        &s.pool,
+    let result = provider_connections::dispatch_prepared(
+        &s.pool.clone().into(),
         &s.registry,
         &binding,
         &format!("inference:{id}"),
         op,
         Duration::from_secs(120),
         operation == "delete" || operation == "stop" || operation == "status",
+        prepared,
     )
     .await;
     save(&s, id, result).await
