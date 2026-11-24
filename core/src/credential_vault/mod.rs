@@ -447,8 +447,27 @@ mod tests {
             original,
             EncryptionContext::new(&scope, Uuid::new_v4(), 1).aad()
         );
-        scope.owner_user_id = Some(Uuid::new_v4());
-        assert_ne!(original, EncryptionContext::new(&scope, id, 1).aad());
+        let other_scopes = [
+            CredentialScope {
+                organization_id: Uuid::new_v4(),
+                ..scope.clone()
+            },
+            CredentialScope {
+                owner_user_id: Some(Uuid::new_v4()),
+                ..scope.clone()
+            },
+            CredentialScope {
+                connection_id: Uuid::new_v4(),
+                ..scope.clone()
+            },
+            CredentialScope {
+                purpose: "github.installation".into(),
+                ..scope.clone()
+            },
+        ];
+        for other in other_scopes {
+            assert_ne!(original, EncryptionContext::new(&other, id, 1).aad());
+        }
         scope.purpose = "secret token!".into();
         assert_eq!(scope.validate(), Err(VaultError::InvalidInput));
     }

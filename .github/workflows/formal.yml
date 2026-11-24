@@ -5,15 +5,23 @@ on:
     paths:
       - 'formal/**'
       - 'scripts/check-sandbox-lifecycle.py'
+      - 'scripts/check-credential-vault.py'
+      - 'scripts/formal_model.py'
       - 'core/src/sandbox_lifecycle.rs'
+      - 'core/src/credential_vault/**'
       - 'core/migrations/010_sandbox_lifecycle.sql'
+      - 'core/migrations/*credential_vault*.sql'
       - '.github/workflows/formal.yml'
   push:
     paths:
       - 'formal/**'
       - 'scripts/check-sandbox-lifecycle.py'
+      - 'scripts/check-credential-vault.py'
+      - 'scripts/formal_model.py'
       - 'core/src/sandbox_lifecycle.rs'
+      - 'core/src/credential_vault/**'
       - 'core/migrations/010_sandbox_lifecycle.sql'
+      - 'core/migrations/*credential_vault*.sql'
       - '.github/workflows/formal.yml'
   workflow_dispatch:
 
@@ -34,3 +42,4 @@ jobs:
         with:
           python-version: '3.12'
       - run: python3 scripts/check-sandbox-lifecycle.py --mutation-checks
+      - run: python3 scripts/check-credential-vault.py --mutation-checks
