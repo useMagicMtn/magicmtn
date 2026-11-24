@@ -78,7 +78,7 @@ FROM scratch
 def main():
     toolchain = tomllib.loads((ROOT / 'rust-toolchain.toml').read_text())['toolchain']['channel']
     cargo_build = ['cargo', f'+{toolchain}', 'build', '--release', '--locked']
-    for name in ['aws', 'apple-container', 'microsoft-mxc', 'ollama']:
+    for name in ['aws', 'apple-container', 'microsoft-mxc', 'modal', 'ollama']:
         executable = f'magicmtn-provider-{name}'
         provider = SOURCES / f'provider-{name}'
         subprocess.run(cargo_build, cwd=provider, check=True)
@@ -87,7 +87,7 @@ def main():
         protocol = metadata.get('metadata', {}).get('magicmtn', {}).get('protocol-version', 1)
         package(name, version, 'macos', 'aarch64', provider / 'target/release' / executable,
                 provider / 'LICENSE', protocol)
-        if name == 'aws':
+        if name in ('aws', 'modal'):
             build_linux(name, ['x86_64', 'aarch64'])
     build_linux('firecracker', ['x86_64', 'aarch64'])
     build_linux('nvx', ['x86_64'])

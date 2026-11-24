@@ -26,7 +26,10 @@ class LinuxPackageTests(unittest.TestCase):
                     if command[1] == 'build':
                         context = Path(command[-1])
                         containerfile = (context / 'Containerfile').read_text()
-                        runtime = ['aws_bridge.py', 'nitro_eks.py'] if name == 'aws' else ['runtime.py']
+                        runtime = {
+                            'aws': ['aws_bridge.py', 'nitro_eks.py'],
+                            'modal': ['modal_bridge.py'],
+                        }.get(name, ['runtime.py'])
                         for filename in runtime:
                             self.assertTrue((context / 'provider/src' / filename).is_file())
                         self.assertTrue((context / 'sdk/magicmtn-sdk/Cargo.toml').is_file())

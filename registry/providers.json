@@ -40,6 +40,15 @@
       ]
     },
     {
+      "name": "modal",
+      "description": "Run remote Linux sandboxes on Modal.",
+      "platforms": [
+        "macos-aarch64",
+        "linux-x86_64",
+        "linux-aarch64"
+      ]
+    },
+    {
       "name": "ollama",
       "description": "Run chat, tool calls, and text embeddings locally with Ollama.",
       "platforms": [
