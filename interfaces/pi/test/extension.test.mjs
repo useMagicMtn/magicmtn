@@ -133,7 +133,7 @@ test("signed-in menu shows the account name without authentication options", asy
   assert.ok(!f.menus[0].items.includes("Sign in"));
   assert.deepEqual(f.calls(), [["pi", "account"], ["pi", "catalog"]]);
   assert.equal(f.menus[0].items[0], "Default (Model)");
-  assert.deepEqual(f.menus[0].items, ["Default (Model)", "View sandboxes", "New workspace", "Inference only"]);
+  assert.deepEqual(f.menus[0].items, ["Default (Model)", "View computers", "New workspace", "Inference only"]);
   assert.ok(!f.menus[0].items.includes("Open workspace"));
   assert.ok(!f.menus[0].items.includes("Terminate workspace"));
 });
@@ -195,7 +195,7 @@ test("Left from termination confirmation returns to sandbox actions, then to the
   const f = await fixture(t, { workspaces: [workspace] });
   f.choices.push(0, 1, "<left>", "<left>", undefined);
   await f.command.handler("view", f.ctx);
-  assert.deepEqual(f.menus[3].items, ["Enter/ssh", "Terminate", "Stop agent", "Restart agent"]);
+  assert.deepEqual(f.menus[3].items, ["Resume", "Terminate", "Stop agent", "Restart agent"]);
   assert.equal(f.menus[4].title, "Sandboxes");
   assert.deepEqual(f.calls(), [["pi", "account"], ["pi", "list"], ["pi", "list"]]);
 });
@@ -314,7 +314,7 @@ test("open lists every live instance across backends without grouping", async (t
   assert.equal(f.menus[0].items.length, 3);
   assert.doesNotMatch(f.menus[0].items.join(" "), /exe.dev|Apple Container/);
   assert.match(f.menus[0].items[1], /MagicMtn Canonical/);
-  assert.deepEqual(f.menus[1].items, ["Enter/ssh", "Terminate", "Stop agent", "Restart agent"]);
+  assert.deepEqual(f.menus[1].items, ["Resume", "Terminate", "Stop agent", "Restart agent"]);
   assert.deepEqual(f.calls(), [["pi", "account"], ["pi", "list"], ["pi", "attach", third.id]]);
 });
 test("open with no live workspaces does not start provisioning", async (t) => {
@@ -323,11 +323,12 @@ test("open with no live workspaces does not start provisioning", async (t) => {
   assert.deepEqual(f.calls(), [["pi", "account"], ["pi", "list"]]);
   assert.match(f.notices.at(-1).message, /No live workspaces/);
 });
-test("reconnects an existing workspace without provisioning another VM", async (t) => {
+test("Resume is first and reconnects the selected workspace", async (t) => {
   const f = await fixture(t, { workspaces: [workspace] });
-  f.choices.push(0, 0);
-  await f.command.handler("open", f.ctx);
-  assert.deepEqual(f.calls(), [["pi", "account"], ["pi", "list"], ["pi", "attach", workspace.id]]);
+  f.choices.push("View computers", 0, (picker) => picker.handleInput("\r"));
+  await f.command.handler("", f.ctx);
+  assert.equal(f.menus[2].items[0], "Resume");
+  assert.deepEqual(f.calls(), [["pi", "account"], ["pi", "catalog"], ["pi", "list"], ["pi", "attach", workspace.id]]);
 });
 test("missing default image and uncertain creation never fall through to attach", async (t) => {
   const f = await fixture(t, { image: false });
@@ -398,7 +399,7 @@ test("cancelling termination leaves the sandbox available without entering it", 
   f.choices.push(0, 1, 0, undefined);
   await f.command.handler("view", f.ctx);
   assert.deepEqual(f.calls(), [["pi", "account"], ["pi", "list"]]);
-  assert.deepEqual(f.menus.at(-1).items, ["Enter/ssh", "Terminate", "Stop agent", "Restart agent"]);
+  assert.deepEqual(f.menus.at(-1).items, ["Resume", "Terminate", "Stop agent", "Restart agent"]);
 });
 
 test("authentication commands do not invoke the CLI or take over the terminal", async (t) => {
@@ -478,6 +479,15 @@ test("local menu creates a sandbox without model connections, account catalogs, 
   assert.deepEqual(f.calls(), [["pi","account"],["--local","mcp","tools"],["--local","mcp","call","sandbox_create"]]);
   assert.deepEqual(f.terminalEvents, []);
   assert.match(f.notices[0].message, /Created sandbox/);
+});
+
+test("View computers lists local sandboxes from the local menu", async (t) => {
+  const f = await fixture(t, { local: true, workspaces: [workspace] });
+  f.choices.push(1);
+  await f.command.handler("", f.ctx);
+  assert.deepEqual(f.menus[0].items, ["New sandbox", "View computers"]);
+  assert.deepEqual(f.menus[1].items, [`${workspace.id} · running`]);
+  assert.deepEqual(f.calls().at(-1), ["--local", "mcp", "call", "sandbox_list"]);
 });
 
 test("local inference selection directs users to Pi's model picker without a Cloud login", async (t) => {

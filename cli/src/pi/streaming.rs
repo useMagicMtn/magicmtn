@@ -75,6 +75,7 @@ where
 pub(super) async fn attach(
     client: reqwest::Client,
     mut url: reqwest::Url,
+    mut poll_url: Option<reqwest::Url>,
     token: &str,
     client_id: &str,
     mut cursor: u64,
@@ -107,7 +108,10 @@ pub(super) async fn attach(
         let (mut sink, mut stream) = socket.split();
         let mut size = crossterm::terminal::size()?;
         // Sequence zero is an idempotent resume, never an input frame.
-        let hello = json!({"client_id":client_id,"seq":0,"input":"","relay_id":relay_id,"cursor":cursor,"cols":size.0,"rows":size.1});
+        let mut hello = json!({"client_id":client_id,"seq":0,"input":"","cursor":cursor,"cols":size.0,"rows":size.1});
+        if let Some(epoch) = relay_id {
+            hello["relay_id"] = json!(epoch);
+        }
         let initial = async {
             send(&mut sink, &hello).await?;
             for frame in &pending {
@@ -134,6 +138,23 @@ pub(super) async fn attach(
                     Some(Ok(Message::Text(text))) => {
                         let response: Value = serde_json::from_str(&text).context("invalid terminal stream response")?;
                         if let Some(code) = response["error"].as_u64() {
+                            if code == 409 && relay_id.is_none() {
+                                if let Some(poll) = poll_url.take() {
+                                    // The gateway may still hold the previous client when
+                                    // the API issues a new ticket. Polling registers the
+                                    // ticket with the relay without sending any keystrokes.
+                                    client
+                                        .post(poll)
+                                        .bearer_auth(token)
+                                        .timeout(Duration::from_secs(5))
+                                        .json(&hello)
+                                        .send()
+                                        .await
+                                        .and_then(reqwest::Response::error_for_status)
+                                        .context("could not register the workspace attachment")?;
+                                    continue 'reconnect;
+                                }
+                            }
                             if code == 429 || code >= 500 { break; }
                             bail!("terminal disconnected: status {code}; reconnect with /magic");
                         }

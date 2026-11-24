@@ -28,12 +28,20 @@ except ImportError:
                      "set MAGICMTN_TEST_MAGIC and install runtime/requirements.txt")
 class StreamTerminalTest(unittest.TestCase):
     def test_stream_input_resize_ack_loss_reconnect_and_terminal_restore(self):
+        self.run_terminal(previous_client=False)
+
+    def test_resume_claims_the_relay_from_the_previous_client(self):
+        self.run_terminal(previous_client=True)
+
+    def run_terminal(self, previous_client):
         binary = str(pathlib.Path(os.environ["MAGICMTN_TEST_MAGIC"]).resolve())
         with tempfile.TemporaryDirectory() as home:
             state = {"seq": 0, "output": b"remote stream ready\r\n", "input": bytearray(),
                      "frames": [], "connections": 0, "dropped": False}
             relay_id = str(uuid.uuid4())
             client_id = str(uuid.uuid4())
+            state["relay_client"] = str(uuid.uuid4()) if previous_client else client_id
+            claims = []
 
             def handle(connection):
                 self.assertEqual(connection.request.headers["Authorization"], "Bearer test-cli-session")
@@ -43,6 +51,9 @@ class StreamTerminalTest(unittest.TestCase):
                     for text in connection:
                         frame = json.loads(text)
                         state["frames"].append(frame)
+                        if frame["client_id"] != state["relay_client"]:
+                            connection.send(json.dumps({"error": 409}))
+                            return
                         if cursor is None:
                             cursor = frame["cursor"]
                         data = base64.b64decode(frame["input"])
@@ -74,10 +85,16 @@ class StreamTerminalTest(unittest.TestCase):
 
                 def do_POST(request):
                     self.assertEqual(request.headers["Authorization"], "Bearer test-cli-session")
-                    request.rfile.read(int(request.headers["Content-Length"]))
-                    self.assertTrue(request.path.endswith("/terminal"), "streaming must not use HTTP polling")
-                    body = json.dumps({"client_id": client_id, "cursor": 0, "token": "test-cli-session",
-                                       "stream_url": stream_url, "poll_url": stream_url}).encode()
+                    frame = json.loads(request.rfile.read(int(request.headers["Content-Length"])))
+                    if request.path == "/poll":
+                        claims.append(frame)
+                        state["relay_client"] = frame["client_id"]
+                        body = json.dumps({"cursor": len(state["output"]),
+                                           "output": base64.b64encode(state["output"]).decode()}).encode()
+                    else:
+                        self.assertTrue(request.path.endswith("/terminal"))
+                        body = json.dumps({"client_id": client_id, "cursor": 0, "token": "test-cli-session",
+                                           "stream_url": stream_url, "poll_url": origin + "poll"}).encode()
                     request.send_response(200)
                     request.send_header("Content-Length", str(len(body)))
                     request.end_headers()
@@ -115,6 +132,9 @@ class StreamTerminalTest(unittest.TestCase):
                 self.assertEqual(process.wait(timeout=2), 0, output.decode(errors="replace"))
                 self.assertTrue(typed and detached, output.decode(errors="replace"))
                 self.assertEqual(state["input"], "typed 雪\r".encode())
+                self.assertEqual(claims, [{"client_id": client_id, "seq": 0, "input": "",
+                                           "cursor": 0, "cols": 80, "rows": 24}] if previous_client else [])
+                self.assertEqual(output.count(b"remote stream ready"), 1)
                 self.assertEqual(output.count("typed 雪\r".encode()), 1)
                 self.assertEqual(termios.tcgetattr(slave), before)
             finally:

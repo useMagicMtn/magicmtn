@@ -24,7 +24,7 @@ export async function localMenu(action, ctx, request, terminal) {
     if (result.isError) throw new Error(result.content.map((item) => item.text || "").join("\n"));
     return JSON.parse(result.content[0].text);
   };
-  if (!action) action = await ctx.ui.select("MagicMtn · Local", ["New sandbox", "View sandboxes"]);
+  if (!action) action = await ctx.ui.select("MagicMtn · Local", ["New sandbox", "View computers"]);
   if (!action) return;
   if (["default", "inference", "Inference only"].includes(action)) {
     ctx.ui.notify("Choose your Pi model with /model. Pi uses your existing provider login.", "info");
@@ -37,7 +37,7 @@ export async function localMenu(action, ctx, request, terminal) {
     ctx.ui.notify(`Created sandbox ${sandbox.id}. Pi can use the MagicMtn sandbox tools.`, "info");
     return;
   }
-  if (!["view", "open", "View sandboxes"].includes(action)) {
+  if (!["view", "open", "View computers"].includes(action)) {
     ctx.ui.notify("Usage: /magic [new|view|inference]", "info");
     return;
   }

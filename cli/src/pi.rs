@@ -442,6 +442,7 @@ pub(crate) async fn terminal(api: &Api, path: &str, label: &str) -> Result<()> {
         return streaming::attach(
             gateway_client,
             url_for_gateway(stream)?,
+            gateway,
             attachment_token.context("terminal stream token missing")?,
             client_id,
             cursor,

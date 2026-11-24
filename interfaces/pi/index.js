@@ -208,7 +208,8 @@ export default function magicmtn(pi) {
       let account;
       const states = new Map();
       let action = args.trim();
-      if (!["", "default", "inference", "Inference only", "new", "New workspace", "New sandbox", "view", "open", "View sandboxes"].includes(action)) {
+      if (["View sandboxes", "View computers"].includes(action)) action = "view";
+      if (!["", "default", "inference", "Inference only", "new", "New workspace", "New sandbox", "view", "open"].includes(action)) {
         ctx.ui.notify("Usage: /magic [default|view|new|inference]", "info");
         return;
       }
@@ -233,12 +234,15 @@ export default function magicmtn(pi) {
             const defaultLabel = defaultModel
               ? `Default (${defaultModel.display_name})`
               : "Default (configure model)";
-            const actions = [defaultLabel, "View sandboxes", "New workspace", "Inference only"];
-            const selected = await select(ctx, `MagicMtn · ${account.user.display_name}`,
-              actions.map((label) => ({ id: label })), (item) => item.id, false, states);
+            const actions = [
+              { id: "default", label: defaultLabel },
+              { id: "view", label: "View computers" },
+              { id: "new", label: "New workspace" },
+              { id: "inference", label: "Inference only" },
+            ];
+            const selected = await select(ctx, `MagicMtn · ${account.user.display_name}`, actions, (item) => item.label, false, states);
             if (selected === BACK || !selected) return;
             action = selected.id;
-            if (action === defaultLabel) action = "default";
           }
           if (!action) return;
           if (action === "default") {
@@ -270,7 +274,7 @@ export default function magicmtn(pi) {
             return;
           }
           let workspace;
-          if (["open", "view", "View sandboxes"].includes(action)) {
+          if (["open", "view"].includes(action)) {
             sandboxes: while (true) {
               const { workspaces } = await magic(["pi", "list"]);
               const running = workspaces.filter((w) => ["running", "starting"].includes(w.status));
@@ -283,10 +287,10 @@ export default function magicmtn(pi) {
               if (!workspace) return;
               while (true) {
                 const selected = await select(ctx, `MagicMtn sandbox ${workspace.id.slice(0, 8)}`,
-                  [{ id: "enter", label: "Enter/ssh" }, { id: "terminate", label: "Terminate" }, { id: "stop", label: "Stop agent" }, { id: "restart", label: "Restart agent" }], (item) => item.label, false, states);
+                  [{ id: "resume", label: "Resume" }, { id: "terminate", label: "Terminate" }, { id: "stop", label: "Stop agent" }, { id: "restart", label: "Restart agent" }], (item) => item.label, false, states);
                 if (selected === BACK) continue sandboxes;
                 if (!selected) return;
-                if (selected.id === "enter") break sandboxes;
+                if (selected.id === "resume") break sandboxes;
                 if (["stop", "restart"].includes(selected.id)) {
                   if (!(await ctx.ui.confirm("MagicMtn agent", `${selected.id === "stop" ? "Stop" : "Restart"} the agent in this sandbox? This may interrupt active work.`))) continue;
                   await magic(["pi", selected.id, workspace.id]);
@@ -329,7 +333,7 @@ export default function magicmtn(pi) {
         } catch (error) {
           const operation = error.attachFailure ? "attach"
             : ["new", "New workspace"].includes(action) ? "create"
-            : ["open", "view", "View sandboxes"].includes(action) ? "resume"
+            : ["open", "view"].includes(action) ? "resume"
             : action === "restart" ? "restart" : undefined;
           const expected = /cancelled|must be published and enabled|No default inference model/i.test(error.message);
           if (mode !== "local" && operation && !error.reported && !expected) {
