@@ -103,8 +103,7 @@ fn cloud_is_default_and_server_selection_is_explicit() {
     let cli = Cli::try_parse_from(["magic", "--server-url", "http://127.0.0.1:1924"]).unwrap();
     assert_eq!(cli.server_url().unwrap(), "http://127.0.0.1:1924");
     assert!(
-        Cli::try_parse_from(["magic", "--local", "--server-url", "http://127.0.0.1:1924"])
-            .is_err()
+        Cli::try_parse_from(["magic", "--local", "--server-url", "http://127.0.0.1:1924"]).is_err()
     );
 }
 
@@ -227,6 +226,19 @@ enum ProviderCommands {
         /// Install a local provider package instead of downloading from the Registry
         #[arg(long, value_name = "PACKAGE")]
         file: Option<PathBuf>,
+    },
+    /// Set credentials for an installed Registry provider
+    Configure {
+        name: String,
+        #[arg(
+            long,
+            required_unless_present = "secret_file",
+            conflicts_with = "secret_file",
+            value_name = "JSON"
+        )]
+        secret_string: Option<String>,
+        #[arg(long, value_name = "PATH")]
+        secret_file: Option<PathBuf>,
     },
     /// List locally installed providers, or full metadata as JSON
     List {
@@ -758,15 +770,20 @@ async fn run(mut cli: Cli) -> Result<()> {
         };
     }
     if let Commands::Provider { command } = &command {
-        return match command {
-            ProviderCommands::Install { name, file } => match (name.as_deref(), file.as_deref()) {
-                (Some(name), None) => provider_registry::install(name).await,
-                (None, Some(file)) => provider_registry::install_file(file).await,
-                _ => unreachable!("provider install requires exactly one package source"),
-            },
-            ProviderCommands::Uninstall { name } => provider_registry::uninstall(name).await,
-            ProviderCommands::List { format } => provider_registry::list(*format),
-        };
+        match command {
+            ProviderCommands::Install { name, file } => {
+                return match (name.as_deref(), file.as_deref()) {
+                    (Some(name), None) => provider_registry::install(name).await,
+                    (None, Some(file)) => provider_registry::install_file(file).await,
+                    _ => unreachable!("provider install requires exactly one package source"),
+                }
+            }
+            ProviderCommands::Uninstall { name } => {
+                return provider_registry::uninstall(name).await
+            }
+            ProviderCommands::List { format } => return provider_registry::list(*format),
+            ProviderCommands::Configure { .. } => {}
+        }
     }
     cli.command = Some(command);
     let target = cli.target()?;
@@ -778,6 +795,17 @@ async fn run(mut cli: Cli) -> Result<()> {
         }
     };
     let local = local_directory.is_some();
+    if matches!(
+        &command,
+        Commands::Provider {
+            command: ProviderCommands::Configure { .. }
+        }
+    ) {
+        anyhow::ensure!(
+            local,
+            "select the local server with --local to configure an installed provider"
+        );
+    }
     let mut api = Api::new(&server_url)?;
     api.local = local;
     if let Some(directory) = local_directory {
@@ -797,6 +825,22 @@ async fn run(mut cli: Cli) -> Result<()> {
         api.token = authentication::Credentials::new()?.load(&api.base)?;
     }
     match command {
+        Commands::Provider {
+            command:
+                ProviderCommands::Configure {
+                    name,
+                    secret_string,
+                    secret_file,
+                },
+        } => {
+            return provider_registry::configure(
+                &api,
+                &name,
+                secret_string,
+                secret_file.as_deref(),
+            )
+            .await;
+        }
         Commands::Login { client } => return authentication::login(&api, &client).await,
         Commands::Logout => return authentication::logout(&api).await,
         Commands::Whoami => {
@@ -998,6 +1042,26 @@ fn confirm_sandbox_termination(
         answer.trim().to_ascii_lowercase().as_str(),
         "y" | "yes"
     ))
+}
+
+#[cfg(test)]
+#[test]
+fn provider_configuration_requires_one_json_source() {
+    let base = ["magic", "provider", "configure", "modal"];
+    for arguments in [
+        vec!["--secret-string", "{}"],
+        vec!["--secret-file", "secret.json"],
+    ] {
+        assert!(Cli::try_parse_from(base.into_iter().chain(arguments)).is_ok());
+    }
+    assert!(Cli::try_parse_from(base).is_err());
+    assert!(Cli::try_parse_from(base.into_iter().chain([
+        "--secret-string",
+        "{}",
+        "--secret-file",
+        "secret.json",
+    ]))
+    .is_err());
 }
 
 #[cfg(test)]

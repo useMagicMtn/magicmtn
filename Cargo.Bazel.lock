@@ -1,5 +1,5 @@
 {
-  "checksum": "818ba1cb537b340b0d2765c93d0564db457a166c8788241e9c1f7692c6d54b5e",
+  "checksum": "675be536c860ffaf04a61203a68b41edd763a780b936e328442179e3731cc55b",
   "conditions": {
     "aarch64-apple-darwin": [
       "aarch64-apple-darwin"
@@ -6445,6 +6445,10 @@
           {
             "id": "uuid 1.27.0",
             "target": "uuid"
+          },
+          {
+            "id": "zeroize 1.9.0",
+            "target": "zeroize"
           }
         ],
         "deps_dev": [
@@ -6514,6 +6518,10 @@
           {
             "id": "tokio 1.53.2",
             "target": "tokio"
+          },
+          {
+            "id": "zeroize 1.9.0",
+            "target": "zeroize"
           }
         ],
         "edition": "2021"
@@ -6549,6 +6557,10 @@
           {
             "id": "serde_json 1.0.151",
             "target": "serde_json"
+          },
+          {
+            "id": "zeroize 1.9.0",
+            "target": "zeroize"
           }
         ],
         "edition": "2021"
@@ -14956,7 +14968,7 @@
           "selects": {
             "cfg(windows)": [
               {
-                "id": "windows-sys 0.48.0",
+                "id": "windows-sys 0.61.2",
                 "target": "windows_sys"
               }
             ]

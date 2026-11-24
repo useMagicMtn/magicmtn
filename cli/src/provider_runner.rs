@@ -109,6 +109,10 @@ pub(crate) async fn run(args: Args) -> Result<!> {
         }
         let result = async {
             let pin: Pin = serde_json::from_value(job["binding"]["pin"].clone())?;
+            ensure!(
+                registry.installed_pin(&pin)?.manifest.credential.is_none(),
+                "credential-aware providers require an authorized execution host"
+            );
             let operation: Operation = serde_json::from_value(job["operation"].clone())?;
             let mut values: BTreeMap<String, String> =
                 serde_json::from_value(job["binding"]["configuration"].clone())?;

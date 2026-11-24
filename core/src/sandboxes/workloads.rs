@@ -63,6 +63,11 @@ pub(super) async fn execute(
     .await;
     match result {
         Ok(ProviderValue::Exec(result)) => Ok(Json(json!(result))),
+        Err(error) if error.is::<connections::CredentialUnavailable>() => Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            "provider credential unavailable".into(),
+        )),
+
         _ => {
             tracing::error!("sandbox workload execution outcome uncertain");
             Err((StatusCode::BAD_GATEWAY, "Execution outcome uncertain; inspect the sandbox before retrying a command that changes state".into()))

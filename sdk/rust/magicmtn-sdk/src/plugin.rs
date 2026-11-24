@@ -8,6 +8,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 
 pub const PROTOCOL_VERSION: u32 = 1;
+pub const CREDENTIAL_PROTOCOL_VERSION: u32 = 2;
 pub const MANIFEST_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -138,9 +139,92 @@ fn is_false(value: &bool) -> bool {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProviderManifest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credential: Option<CredentialSpec>,
     pub manifest_version: u32,
     pub provider_version: String,
     pub capabilities: Capabilities,
+}
+
+/// Required fields in the provider's JSON credential bundle.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CredentialSpec {
+    pub fields: Vec<String>,
+}
+
+impl CredentialSpec {
+    pub fn validate(&self) -> anyhow::Result<()> {
+        let mut unique = std::collections::BTreeSet::new();
+        anyhow::ensure!(
+            !self.fields.is_empty()
+                && self.fields.len() <= 32
+                && self.fields.iter().all(|field| {
+                    !field.is_empty()
+                        && field.len() <= 96
+                        && field
+                            .bytes()
+                            .all(|c| c.is_ascii_alphanumeric() || c == b'_')
+                        && unique.insert(field)
+                }),
+            "invalid provider credential fields"
+        );
+        Ok(())
+    }
+
+    pub fn check_values(&self, values: &CredentialValues) -> anyhow::Result<()> {
+        self.validate()?;
+        for field in &self.fields {
+            anyhow::ensure!(
+                values.0.get(field).is_some_and(|value| !value.is_empty()),
+                "provider credential requires {field}"
+            );
+        }
+        anyhow::ensure!(
+            values.0.len() == self.fields.len(),
+            "unexpected provider credential fields"
+        );
+        Ok(())
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct CredentialValues(pub std::collections::BTreeMap<String, String>);
+
+impl Drop for CredentialValues {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        for value in self.0.values_mut() {
+            value.zeroize();
+        }
+    }
+}
+
+impl std::fmt::Debug for CredentialValues {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("CredentialValues([REDACTED])")
+    }
+}
+
+/// Host-to-provider startup frame. It is separate from ordinary operation payloads.
+#[derive(Serialize)]
+pub struct ProviderStartup<'a> {
+    pub id: u64,
+    pub protocol_version: u32,
+    pub provider: &'a str,
+    pub credential: Option<&'a CredentialValues>,
+    pub verify_account: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderStartupInput {
+    pub id: u64,
+    pub protocol_version: u32,
+    pub provider: String,
+    pub credential: Option<CredentialValues>,
+    pub verify_account: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -310,6 +394,7 @@ pub enum Outcome {
 #[serde(tag = "kind", content = "value", rename_all = "snake_case")]
 pub enum Value {
     Description(ProviderManifest),
+    VerifiedAccount(String),
     Search(SearchResponse),
     Sandbox(ProviderSandbox),
     SandboxStatus(crate::SandboxState),

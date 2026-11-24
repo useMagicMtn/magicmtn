@@ -38,6 +38,7 @@ async fn connection(
         .installed_pin(&binding.pin)
         .map_err(|_| invalid())?;
     if binding.runner_id.is_some()
+        || installed.manifest.credential.is_some()
         || !installed
             .manifest
             .capabilities

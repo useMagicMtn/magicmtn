@@ -19,6 +19,7 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock};
 
+mod provider_credentials;
 mod shell;
 
 pub static MIGRATOR: LazyLock<sqlx::migrate::Migrator> = LazyLock::new(|| {
@@ -273,18 +274,29 @@ pub async fn run_with_ready(options: Options, ready: impl FnOnce() -> Result<()>
         .bootstrap_with_configuration(&registry, &overrides)
         .await?;
     let store = Store::Sqlite(database.clone());
+    let credentials = provider_credentials::LocalCredentials::open(
+        database.clone(),
+        registry.clone(),
+        &options.directory,
+    )
+    .await?;
     let listener = tokio::net::TcpListener::bind(options.bind).await?;
     let info = save_connection(
         &options.directory,
         format!("http://{}", listener.local_addr()?),
     )?;
     let (stop, mut stopped) = tokio::sync::watch::channel(false);
+    let credential_routes = credentials.router().layer(middleware::from_fn_with_state(
+        Arc::new(info.token.clone()),
+        authenticate,
+    ));
     let app = router(
         store.clone(),
         registry.clone(),
         info.token.clone(),
         options.ttl_seconds,
     )
+    .merge(credential_routes)
     .route(
         "/shutdown",
         post(move || {

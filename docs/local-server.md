@@ -88,3 +88,16 @@ Stop the server before installing or uninstalling providers. Keep provider relea
 | `MAGICMTN_LOCAL_DIRECTORY`  | Override the local server's database, credential, and lock directory. Set it for both the server and local CLI commands. |
 
 Keep the local directory to retain your sandbox records and server credential. For a backup, stop the server and copy the entire directory. Each directory belongs to one local installation.
+
+## Configure provider credentials
+
+Install the provider by its Registry name, start the local server, and pass its JSON bundle with either `--secret-file` or `--secret-string`. Replace `PROVIDER` with the exact installed Registry name.
+
+```sh
+magic --local provider configure PROVIDER --secret-file ./credentials.json
+magic --local provider configure PROVIDER --secret-string "$PROVIDER_CREDENTIAL_JSON"
+```
+
+Each provider declares its required JSON fields. The JSON file can have any filename. The file form keeps the credential out of command arguments and shell history. A successful command verifies the provider account, saves the encrypted bundle, and prepares it for use. To rotate a credential for the same account, run the command with the replacement bundle.
+
+Back up `provider-credentials.key` separately from the SQLite database and restore both to recover configured credentials. The key is created in the private local data directory.

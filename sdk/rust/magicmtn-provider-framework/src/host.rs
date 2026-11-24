@@ -2,8 +2,8 @@
 use super::MAX_MESSAGE_BYTES;
 use anyhow::{bail, ensure, Context, Result};
 use magicmtn_sdk::plugin::{
-    Operation, Outcome, ProviderManifest, Request, Response, Value, MANIFEST_VERSION,
-    PROTOCOL_VERSION,
+    CredentialValues, Operation, Outcome, ProviderManifest, ProviderStartup, Request, Response,
+    Value, CREDENTIAL_PROTOCOL_VERSION, MANIFEST_VERSION, PROTOCOL_VERSION,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -21,6 +21,9 @@ use tokio::{
     sync::Mutex,
 };
 
+mod credentials;
+pub use credentials::{CredentialAdmission, CredentialRef, CredentialUpdate, PreparedCredential};
+
 pub fn valid_name(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= 64
@@ -36,7 +39,7 @@ fn digest(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Pin {
     pub name: String,
@@ -134,12 +137,38 @@ impl Connection {
         }
         let id = self.next;
         self.next += 1;
-        let mut bytes = serde_json::to_vec(&Request {
+        let bytes = serde_json::to_vec(&Request {
             id,
             protocol_version: self.protocol_version,
             provider: name.into(),
             operation,
         })?;
+        self.exchange_frame(name, id, bytes).await
+    }
+
+    async fn startup(
+        &mut self,
+        name: &str,
+        credential: Option<&CredentialValues>,
+        verify_account: bool,
+    ) -> Result<Value> {
+        if self.protocol_version != CREDENTIAL_PROTOCOL_VERSION {
+            return self.exchange(name, Operation::Describe).await;
+        }
+        let id = self.next;
+        self.next += 1;
+        let bytes = serde_json::to_vec(&ProviderStartup {
+            id,
+            protocol_version: self.protocol_version,
+            provider: name,
+            credential,
+            verify_account,
+        })?;
+        self.exchange_frame(name, id, bytes).await
+    }
+
+    async fn exchange_frame(&mut self, name: &str, id: u64, bytes: Vec<u8>) -> Result<Value> {
+        let mut bytes = zeroize::Zeroizing::new(bytes);
         ensure!(
             (bytes.len() as u64) < MAX_MESSAGE_BYTES,
             "RPC request exceeds message limit"
@@ -166,7 +195,12 @@ impl Connection {
         );
         match response.outcome {
             Outcome::Ok(value) => Ok(value),
-            Outcome::Error(error) => Err(error.into()),
+            Outcome::Error(mut error) => {
+                if self.protocol_version == CREDENTIAL_PROTOCOL_VERSION {
+                    error.message = "provider operation failed".into();
+                }
+                Err(error.into())
+            }
         }
     }
 }
@@ -189,9 +223,46 @@ impl Client {
         protocol_version: u32,
         environment: Option<&ProcessEnvironment>,
     ) -> Result<Self> {
+        Self::start_with_credential(path, name, protocol_version, environment, None).await
+    }
+
+    async fn start_with_credential(
+        path: &Path,
+        name: &str,
+        protocol_version: u32,
+        environment: Option<&ProcessEnvironment>,
+        credential: Option<&CredentialValues>,
+    ) -> Result<Self> {
+        let (mut connection, scratch) = Self::spawn(path, protocol_version, environment)?;
+        let value = tokio::time::timeout(
+            Duration::from_secs(10),
+            connection.startup(name, credential, false),
+        )
+        .await
+        .context("provider handshake timed out")??;
+        let Value::Description(manifest) = value else {
+            bail!("provider did not return a manifest")
+        };
+        validate_manifest(protocol_version, &manifest)?;
+        Ok(Self {
+            name: name.into(),
+            connection: Mutex::new(Some(connection)),
+            manifest,
+            _scratch: scratch,
+        })
+    }
+
+    fn spawn(
+        path: &Path,
+        protocol_version: u32,
+        environment: Option<&ProcessEnvironment>,
+    ) -> Result<(Connection, Option<tempfile::TempDir>)> {
         // Retained private installations predate the public v1 numbering.
         ensure!(
-            matches!(protocol_version, PROTOCOL_VERSION | 3),
+            matches!(
+                protocol_version,
+                PROTOCOL_VERSION | CREDENTIAL_PROTOCOL_VERSION | 3
+            ),
             "unsupported installed provider protocol"
         );
         let mut command = Command::new(path);
@@ -212,37 +283,22 @@ impl Client {
         let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
+            .stderr(if protocol_version == CREDENTIAL_PROTOCOL_VERSION {
+                Stdio::null()
+            } else {
+                Stdio::inherit()
+            })
             .kill_on_drop(true)
             .spawn()
             .context("starting installed provider")?;
-        let mut connection = Connection {
+        let connection = Connection {
             input: child.stdin.take().context("missing stdin")?,
             output: BufReader::new(child.stdout.take().context("missing stdout")?),
             child,
             next: 1,
             protocol_version,
         };
-        let value = tokio::time::timeout(
-            Duration::from_secs(10),
-            connection.exchange(name, Operation::Describe),
-        )
-        .await
-        .context("provider handshake timed out")??;
-        let Value::Description(manifest) = value else {
-            bail!("provider did not return a manifest")
-        };
-        ensure!(
-            manifest.manifest_version == MANIFEST_VERSION
-                && valid_version(&manifest.provider_version),
-            "unsupported provider manifest"
-        );
-        Ok(Self {
-            name: name.into(),
-            connection: Mutex::new(Some(connection)),
-            manifest,
-            _scratch: scratch,
-        })
+        Ok((connection, scratch))
     }
     pub async fn call(&self, operation: Operation, timeout: Duration) -> Result<Value> {
         ensure!(
@@ -287,6 +343,21 @@ impl Client {
     }
 }
 
+fn validate_manifest(protocol: u32, manifest: &ProviderManifest) -> Result<()> {
+    ensure!(
+        manifest.manifest_version == MANIFEST_VERSION && valid_version(&manifest.provider_version),
+        "unsupported provider manifest"
+    );
+    ensure!(
+        manifest.credential.is_some() == (protocol == CREDENTIAL_PROTOCOL_VERSION),
+        "provider credential protocol mismatch"
+    );
+    if let Some(spec) = &manifest.credential {
+        spec.validate()?;
+    }
+    Ok(())
+}
+
 type Clients = HashMap<(String, String, String, String), Arc<Client>>;
 
 #[derive(Clone)]
@@ -295,6 +366,7 @@ pub struct Registry {
     catalog: Option<Arc<Vec<Release>>>,
     pub gate: Arc<Mutex<()>>,
     clients: Arc<Mutex<Clients>>,
+    credentials: Arc<credentials::Credentials>,
 }
 impl Registry {
     pub fn new(root: PathBuf) -> Result<Self> {
@@ -309,6 +381,7 @@ impl Registry {
             catalog: None,
             gate: Arc::new(Mutex::new(())),
             clients: Arc::new(Mutex::new(HashMap::new())),
+            credentials: Default::default(),
         })
     }
     pub fn from_catalog(path: &Path) -> Result<Self> {
@@ -335,7 +408,10 @@ impl Registry {
             ensure!(
                 valid_name(&p.name)
                     && valid_version(&p.version)
-                    && matches!(p.protocol_version, PROTOCOL_VERSION | 3),
+                    && matches!(
+                        p.protocol_version,
+                        PROTOCOL_VERSION | CREDENTIAL_PROTOCOL_VERSION | 3
+                    ),
                 "invalid catalog release"
             );
             ensure!(
@@ -350,6 +426,7 @@ impl Registry {
                     && release.installed.manifest.manifest_version == MANIFEST_VERSION,
                 "catalog manifest version mismatch"
             );
+            validate_manifest(p.protocol_version, &release.installed.manifest)?;
             ensure!(
                 identities.insert((&p.name, &p.version, &p.os, &p.arch)),
                 "duplicate catalog release"
@@ -378,6 +455,7 @@ impl Registry {
             catalog: Some(Arc::new(releases)),
             gate: Arc::new(Mutex::new(())),
             clients: Arc::new(Mutex::new(HashMap::new())),
+            credentials: Default::default(),
         })
     }
     pub fn immutable(&self) -> bool {
@@ -442,6 +520,7 @@ impl Registry {
                 && manifest.provider_version == version,
             "installed provider metadata mismatch"
         );
+        validate_manifest(package.protocol_version, &manifest)?;
         let active = std::fs::read_to_string(self.root.join(name).join("active"))
             .is_ok_and(|v| v == version);
         Ok(Installed {
@@ -476,6 +555,38 @@ impl Registry {
             .context("provider is not installed/active")?;
         self.installed(name, &version)
     }
+    /// Read installation provenance without consulting the registry or running a package.
+    pub fn registry_release(&self, name: &str) -> Result<Installed> {
+        #[derive(Deserialize)]
+        struct Origin {
+            registry: String,
+            pin: Pin,
+            archive_sha256: String,
+        }
+        // Validate before using the caller's name as a path component.
+        ensure!(valid_name(name), "invalid provider name");
+        let release = self
+            .active(name)
+            .with_context(|| format!("no installed provider named '{name}'"))?;
+        let directory = self.directory(name, &release.package.version)?;
+        let origin: Origin = serde_json::from_slice(
+            &std::fs::read(directory.join("registry-origin.json")).context(
+                "install this provider from the registry before configuring credentials",
+            )?,
+        )?;
+        ensure!(
+            !origin.registry.is_empty()
+                && origin.pin == release.pin()
+                && origin.archive_sha256.len() == 64
+                && origin
+                    .archive_sha256
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit()),
+            "installed provider differs from its registry identity"
+        );
+        Ok(release)
+    }
+
     pub fn list(&self) -> Result<Vec<Installed>> {
         if let Some(catalog) = &self.catalog {
             return Ok(catalog.iter().map(|r| r.installed.clone()).collect());
@@ -575,13 +686,20 @@ impl Registry {
                 current.package == package,
                 "cannot replace an installed provider version"
             );
+            ensure!(
+                digest(&std::fs::read(directory.join("provider"))?) == package.sha256,
+                "installed provider checksum changed"
+            );
             self.activate(&package.name, &package.version)?;
             return self.installed(&package.name, &package.version);
         }
         // Re-enrollment of an unchanged retained package uses its existing
         // implementation. Fresh installations must use the public SDK protocol.
         ensure!(
-            package.protocol_version == PROTOCOL_VERSION,
+            matches!(
+                package.protocol_version,
+                PROTOCOL_VERSION | CREDENTIAL_PROTOCOL_VERSION
+            ),
             "provider platform/protocol is incompatible with this host"
         );
         let staged = tempfile::tempdir_in(&self.root)?;
@@ -593,7 +711,15 @@ impl Registry {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))?;
         }
-        let client = Client::start(&path, &package.name).await?;
+        // Discovering capabilities runs package code before any connection has
+        // authorized credentials. Use the same clean environment as dispatch.
+        let client = Client::start_configured(
+            &path.canonicalize()?,
+            &package.name,
+            package.protocol_version,
+            Some(&ProcessEnvironment::default()),
+        )
+        .await?;
         ensure!(
             client.manifest.provider_version == package.version,
             "package version differs from handshake"
@@ -642,17 +768,7 @@ impl Registry {
         timeout: Duration,
         environment: Option<&ProcessEnvironment>,
     ) -> Result<Value> {
-        let configured_environment = self.catalog.as_ref().map(|catalog| {
-            let mut values = catalog
-                .iter()
-                .find(|r| r.installed.pin() == *pin)
-                .map(|r| r.runtime_environment.clone())
-                .unwrap_or_default();
-            if let Some(environment) = environment {
-                values.extend(environment.values.clone());
-            }
-            ProcessEnvironment { values }
-        });
+        let configured_environment = self.configured_environment(pin, environment);
         let environment = configured_environment.as_ref().or(environment);
         let environment_digest = environment
             .map(|e| serde_json::to_vec(&e.values).map(|v| digest(&v)))
@@ -677,20 +793,10 @@ impl Registry {
             if let Some(client) = clients.get(&key) {
                 client.clone()
             } else {
-                let installed = self.installed_pin(pin)?;
-                let executable = if let Some(catalog) = &self.catalog {
-                    catalog
-                        .iter()
-                        .find(|r| r.installed.pin() == *pin)
-                        .and_then(|r| r.executable.clone())
-                        .context("provider requires a connected runner")?
-                } else {
-                    self.directory(&pin.name, &pin.version)?.join("provider")
-                };
+                let (installed, executable) = self.executable(pin)?;
                 ensure!(
-                    installed.package.sha256 == pin.sha256
-                        && digest(&std::fs::read(&executable)?) == pin.sha256,
-                    "installed provider checksum changed"
+                    installed.manifest.credential.is_none(),
+                    "provider requires a prepared credential"
                 );
                 let client = Arc::new(
                     Client::start_configured(
@@ -711,7 +817,44 @@ impl Registry {
         };
         client.call(operation, timeout).await
     }
+    fn configured_environment(
+        &self,
+        pin: &Pin,
+        environment: Option<&ProcessEnvironment>,
+    ) -> Option<ProcessEnvironment> {
+        let catalog = self.catalog.as_ref()?;
+        let mut values = catalog
+            .iter()
+            .find(|release| release.installed.pin() == *pin)
+            .map(|release| release.runtime_environment.clone())
+            .unwrap_or_default();
+        if let Some(environment) = environment {
+            values.extend(environment.values.clone());
+        }
+        Some(ProcessEnvironment { values })
+    }
+
+    fn executable(&self, pin: &Pin) -> Result<(Installed, PathBuf)> {
+        let installed = self.installed_pin(pin)?;
+        let executable = if let Some(catalog) = &self.catalog {
+            catalog
+                .iter()
+                .find(|r| r.installed.pin() == *pin)
+                .and_then(|r| r.executable.clone())
+                .context("provider requires a connected runner")?
+        } else {
+            self.directory(&pin.name, &pin.version)?.join("provider")
+        };
+        ensure!(
+            installed.package.sha256 == pin.sha256
+                && digest(&std::fs::read(&executable)?) == pin.sha256,
+            "installed provider checksum changed"
+        );
+        Ok((installed, executable.canonicalize()?))
+    }
+
     pub async fn release(&self, scope: &str) {
+        self.credentials.release(scope);
         let removed = {
             let mut clients = self.clients.lock().await;
             let keys: Vec<_> = clients
@@ -728,6 +871,7 @@ impl Registry {
         }
     }
     pub async fn shutdown(&self) {
+        self.credentials.clear();
         let clients: Vec<_> = self
             .clients
             .lock()
@@ -844,6 +988,7 @@ mod tests {
             .unwrap();
             std::fs::write(directory.join("provider"), executable).unwrap();
             let manifest = ProviderManifest {
+                credential: None,
                 manifest_version: MANIFEST_VERSION,
                 provider_version: package.version.clone(),
                 capabilities: magicmtn_sdk::plugin::Capabilities::inference(vec!["chat".into()]),
@@ -869,6 +1014,7 @@ mod tests {
             protocol_version: 3,
             provider: "retained".into(),
             outcome: Outcome::Ok(Value::Description(ProviderManifest {
+                credential: None,
                 manifest_version: MANIFEST_VERSION,
                 provider_version: "0.1.0".into(),
                 capabilities: magicmtn_sdk::plugin::Capabilities::inference(vec![]),

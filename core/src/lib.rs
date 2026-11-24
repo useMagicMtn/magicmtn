@@ -16,6 +16,7 @@ pub mod sandbox_lifecycle;
 
 pub mod inference_resources;
 pub mod provider_connections;
+pub mod provider_credentials;
 pub mod provider_runners;
 pub mod redaction;
 pub mod workspace;

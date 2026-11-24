@@ -100,7 +100,10 @@ async fn list(State(s): State<ConnectionState>) -> Reply {
     let managed_profiles: Vec<_> = credentials()
         .map_err(failure)?
         .into_iter()
-        .filter(|(_, source)| crate::public_providers::contains(&source.provider))
+        .filter(|(_, source)| {
+            !source.provider_account.is_some()
+                && crate::public_providers::contains(&source.provider)
+        })
         .map(|(reference, source)| public_profile(reference, source))
         .collect();
     Ok(Json(
@@ -170,6 +173,8 @@ struct ManagedCredential {
     #[serde(default)]
     workload_role: bool,
     #[serde(default)]
+    provider_account: Option<String>,
+    #[serde(default)]
     configuration: BTreeMap<String, String>,
 }
 fn credentials() -> anyhow::Result<BTreeMap<String, ManagedCredential>> {
@@ -222,7 +227,7 @@ impl CloudDefaults {
                 .get(&reference)
                 .context("cloud default provider needs its managed credential profile")?;
             credential_exists(&reference, &name)?;
-            if !profile.workload_role {
+            if !profile.workload_role && !profile.provider_account.is_some() {
                 let secret_env = profile
                     .secret_env
                     .as_deref()
@@ -261,7 +266,18 @@ impl CloudDefaults {
                 status: enabled(),
                 expected_generation: None,
             };
-            validate_input(&mut input, registry, false)?;
+            validate_input(
+                &mut input,
+                registry,
+                false,
+                profile.provider_account.is_some(),
+            )?;
+            let reference = match profile.provider_account.as_deref() {
+                Some(account) => {
+                    crate::provider_credentials::managed_reference(&reference, account)?
+                }
+                None => reference,
+            };
             providers.push((release, reference, input.configuration));
         }
         Ok(Some(Self {
@@ -365,13 +381,17 @@ fn credential_exists(reference: &str, provider: &str) -> anyhow::Result<()> {
     let source = map
         .get(reference)
         .context("unknown managed credential reference")?;
+    let valid_source = if source.provider_account.is_some() {
+        !source.workload_role && source.secret_env.is_none()
+    } else {
+        source
+            .secret_env
+            .as_ref()
+            .is_some_and(|value| value.starts_with("MAGICMTN_SECRET_"))
+            || (source.workload_role && provider == "aws")
+    };
     ensure!(
-        source.provider == provider
-            && (source
-                .secret_env
-                .as_ref()
-                .is_some_and(|v| v.starts_with("MAGICMTN_SECRET_"))
-                || (source.workload_role && provider == "aws")),
+        source.provider == provider && valid_source,
         "credential provider/source mismatch"
     );
     Ok(())
@@ -380,6 +400,7 @@ fn validate_input(
     input: &mut ConnectionInput,
     registry: &Registry,
     allow_local_reference: bool,
+    allow_prepared: bool,
 ) -> anyhow::Result<Installed> {
     ensure!(
         !input.display_name.trim().is_empty()
@@ -414,10 +435,15 @@ fn validate_input(
             "local runtime providers require a connected runner in container mode"
         );
     }
-    if input.credential_ref.is_none() && input.runner_id.is_none() {
+    if input.credential_ref.is_none()
+        && input.runner_id.is_none()
+        && release.manifest.credential.is_none()
+    {
         let profiles: Vec<_> = credentials()?
             .into_iter()
-            .filter(|(_, source)| source.provider == input.provider)
+            .filter(|(_, source)| {
+                source.provider == input.provider && !source.provider_account.is_some()
+            })
             .map(|(reference, _)| reference)
             .collect();
         ensure!(profiles.len() <= 1, "select a managed credential profile");
@@ -427,10 +453,20 @@ fn validate_input(
         input.runner_id.is_some() || registry.executes_on_host(&release.pin()),
         "this release requires a provider runner"
     );
+    if release.manifest.credential.is_some() {
+        ensure!(
+            allow_prepared && input.runner_id.is_none() && input.credential_ref.is_some(),
+            "credential-aware connections require operator provisioning"
+        );
+    }
     if let Some(reference) = input.credential_ref.as_ref().filter(|_| !local_reference) {
         credential_exists(reference, &input.provider)?;
         let map = credentials()?;
         let source = &map[reference];
+        ensure!(
+            source.provider_account.is_some() == release.manifest.credential.is_some(),
+            "credential profile and provider protocol differ"
+        );
         if input.provider == "openai-compatible"
             && input.configuration.contains_key("MAGICMTN_OPENAI_BASE_URL")
         {
@@ -450,6 +486,14 @@ fn validate_input(
         }
     }
     for (key, value) in &input.configuration {
+        ensure!(
+            release
+                .manifest
+                .credential
+                .as_ref()
+                .is_none_or(|spec| !spec.fields.contains(key)),
+            "credential fields belong in the credential store"
+        );
         ensure!(
             safe_environment_key(key)
                 && ![
@@ -486,7 +530,7 @@ fn validate_input(
 }
 async fn create(State(s): State<ConnectionState>, Json(mut input): Json<ConnectionInput>) -> Reply {
     crate::public_providers::require(&input.provider)?;
-    let release = validate_input(&mut input, &s.registry, false).map_err(failure)?;
+    let release = validate_input(&mut input, &s.registry, false, false).map_err(failure)?;
     let id = Uuid::new_v4();
     let reference = format!("connection:{id}");
     let mut tx = s.pool.begin().await.map_err(failure)?;
@@ -546,7 +590,7 @@ async fn update(
     crate::public_providers::require(&input.provider)?;
     let retain_local:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM provider_connections WHERE id=$1 AND credential_ref=$2 AND provider=$3)")
         .bind(id).bind(&input.credential_ref).bind(&input.provider).fetch_one(&s.pool).await.map_err(failure)?;
-    let release = validate_input(&mut input, &s.registry, retain_local).map_err(failure)?;
+    let release = validate_input(&mut input, &s.registry, retain_local, false).map_err(failure)?;
     let row=sqlx::query("UPDATE provider_connections SET display_name=$2,provider_pin=$3,manifest=$4,configuration=$5,credential_ref=$6,runner_id=$7,status=$8,generation=generation+1,updated_at=now() WHERE id=$1 AND provider=$9 AND generation=$10 RETURNING *")
         .bind(id).bind(&input.display_name).bind(json!(release.pin())).bind(json!(release.manifest)).bind(json!(input.configuration))
         .bind(&input.credential_ref).bind(input.runner_id).bind(&input.status).bind(&input.provider).bind(input.expected_generation)
@@ -679,6 +723,9 @@ async fn bootstrap_organization_inner(
     for release in releases.into_iter().filter(|r| {
         r.package.os == std::env::consts::OS && r.package.arch == std::env::consts::ARCH
     }) {
+        if release.manifest.credential.is_some() {
+            continue;
+        }
         let name = &release.package.name;
         sqlx::query("INSERT INTO organization_providers(organization_id,provider,version) VALUES($1,$2,$3) ON CONFLICT DO NOTHING")
             .bind(org).bind(name).bind(&release.package.version).execute(pool).await?;
@@ -958,6 +1005,24 @@ pub async fn dispatch(
     .await
 }
 
+#[derive(Debug, thiserror::Error)]
+#[error("provider credential unavailable")]
+pub(crate) struct CredentialUnavailable;
+
+pub(crate) fn admit_credential(
+    registry: &Registry,
+    binding: &Binding,
+) -> anyhow::Result<Option<magicmtn_provider_framework::host::CredentialAdmission>> {
+    if binding.manifest.credential.is_none() {
+        return Ok(None);
+    }
+    let key = crate::provider_credentials::reference(binding)?;
+    registry
+        .admit_credential(&key, &binding.pin)
+        .map(Some)
+        .map_err(|_| CredentialUnavailable.into())
+}
+
 pub async fn dispatch_store(
     store: &crate::sandbox_storage::Store,
     registry: &Registry,
@@ -966,6 +1031,22 @@ pub async fn dispatch_store(
     operation: Operation,
     timeout: Duration,
     cleanup: bool,
+) -> anyhow::Result<ProviderValue> {
+    dispatch_prepared(
+        store, registry, binding, scope, operation, timeout, cleanup, None,
+    )
+    .await
+}
+
+pub(crate) async fn dispatch_prepared(
+    store: &crate::sandbox_storage::Store,
+    registry: &Registry,
+    binding: &Binding,
+    scope: &str,
+    operation: Operation,
+    timeout: Duration,
+    cleanup: bool,
+    prepared: Option<magicmtn_provider_framework::host::CredentialAdmission>,
 ) -> anyhow::Result<ProviderValue> {
     store.validate_binding(binding, cleanup).await?;
     ensure!(
@@ -994,6 +1075,21 @@ pub async fn dispatch_store(
             );
         }
     }
+    let admitted = match prepared {
+        Some(admission) => Some(admission),
+        None => admit_credential(registry, binding)?,
+    };
+    let prepared = if let Some(admission) = admitted {
+        let client_scope = format!("{scope}:{}:{}", binding.connection_id, binding.generation);
+        Some(
+            registry
+                .prepared_client(admission, &client_scope, &binding.configuration)
+                .await
+                .map_err(|_| CredentialUnavailable)?,
+        )
+    } else {
+        None
+    };
     let kind = match &operation {
         Operation::SandboxCreate { .. } => Some("sandbox"),
         Operation::InferenceDeploymentCreate { .. } => Some("inference"),
@@ -1005,7 +1101,10 @@ pub async fn dispatch_store(
                 .map_err(Into::into);
         }
     }
-    let result = dispatch_once(store, registry, binding, scope, operation, timeout).await;
+    let result = match prepared {
+        Some(client) => client.call(operation, timeout).await,
+        None => dispatch_once(store, registry, binding, scope, operation, timeout).await,
+    };
     if let Some(kind) = kind {
         store
             .finish_receipt(binding, scope, kind, result.as_ref().ok().map(|v| json!(v)))
@@ -1090,6 +1189,7 @@ mod tests {
                 sha256: "abc".into(),
             },
             manifest: ProviderManifest {
+                credential: None,
                 manifest_version: 1,
                 provider_version: "0.2.0".into(),
                 capabilities: magicmtn_sdk::plugin::Capabilities::sandbox(vec![
@@ -1127,6 +1227,7 @@ mod tests {
             provider: "e2b".into(),
             secret_env: Some("MAGICMTN_SECRET_E2B".into()),
             workload_role: false,
+            provider_account: None,
             configuration: BTreeMap::from([("MAGICMTN_E2B_TEMPLATES".into(),
                 "{\"123456789012.dkr.ecr.us-east-2.amazonaws.com/app@sha256:abc\":\"template-id\"}".into())]),
         });
@@ -1145,6 +1246,7 @@ mod tests {
                 provider: "boat".into(),
                 secret_env: Some("MAGICMTN_SECRET_BOAT".into()),
                 workload_role: false,
+                provider_account: None,
                 configuration: BTreeMap::from([(
                     "MAGICMTN_BOAT_SNAPSHOTS".into(),
                     "{\"private-image@sha256:abc\":\"private-snapshot\"}".into(),
@@ -1217,6 +1319,7 @@ mod tests {
                     sha256: hex::encode(sha2::Sha256::digest(b"fixture")),
                 },
                 manifest: ProviderManifest {
+                    credential: None,
                     manifest_version: 1,
                     provider_version: "0.1.0".into(),
                     capabilities: magicmtn_sdk::plugin::Capabilities::inference(
@@ -1241,7 +1344,7 @@ mod tests {
             status: "enabled".into(),
             expected_generation: None,
         };
-        validate_input(&mut input, &registry, false).unwrap();
+        validate_input(&mut input, &registry, false, false).unwrap();
         assert_eq!(input.credential_ref.as_deref(), Some("managed:fireworks"));
         assert_eq!(
             input.configuration["FIREWORKS_ACCOUNT_ID"],
@@ -1250,7 +1353,7 @@ mod tests {
         input
             .configuration
             .insert("FIREWORKS_ACCOUNT_ID".into(), "another-account".into());
-        assert!(validate_input(&mut input, &registry, false).is_err());
+        assert!(validate_input(&mut input, &registry, false, false).is_err());
     }
     #[test]
     fn configuration_cannot_change_programs_or_credentials() {
