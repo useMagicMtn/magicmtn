@@ -142,6 +142,9 @@ pub fn configuration_keys(provider: &str) -> &'static [&'static str] {
             "MAGICMTN_AWS_MICROVM_IMAGES",
             "MAGICMTN_AWS_MICROVM_EGRESS_CONNECTORS",
             "MAGICMTN_AWS_MICROVM_EXECUTION_ROLE_ARN",
+            "MAGICMTN_AWS_SANDBOX_BACKEND",
+            "MAGICMTN_AWS_NITRO_EKS_CLUSTER",
+            "MAGICMTN_AWS_NITRO_EKS_NAMESPACE",
         ],
         "fireworks" => &[
             "FIREWORKS_ACCOUNT_ID",

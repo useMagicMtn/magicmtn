@@ -2,8 +2,9 @@
 use super::MAX_MESSAGE_BYTES;
 use anyhow::{bail, ensure, Context, Result};
 use magicmtn_sdk::plugin::{
-    CredentialValues, Operation, Outcome, ProviderManifest, ProviderStartup, Request, Response,
-    Value, CREDENTIAL_PROTOCOL_VERSION, MANIFEST_VERSION, PROTOCOL_VERSION,
+    CredentialValues, ErrorCode, Operation, Outcome, ProviderError, ProviderManifest,
+    ProviderStartup, Request, Response, Value, CREDENTIAL_PROTOCOL_VERSION, MANIFEST_VERSION,
+    PROTOCOL_VERSION,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -123,6 +124,42 @@ fn retained_chat_input(operation: &mut Operation) -> Result<()> {
     Ok(())
 }
 
+/// Fixed, non-secret AWS Nitro readiness errors that establish that no command was submitted.
+/// All other credentialed provider messages remain redacted.
+pub fn nitro_startup_error(provider: &str, error: &ProviderError) -> Option<&'static str> {
+    if provider != "aws"
+        || error.retryable
+        || !matches!(
+            error.code,
+            ErrorCode::InvalidRequest | ErrorCode::UpstreamUnavailable
+        )
+    {
+        return None;
+    }
+    [
+        "Nitro sandbox is not ready",
+        "Nitro sandbox is waiting for node capacity or scheduling constraints",
+        "Nitro sandbox image could not be pulled",
+        "Nitro sandbox lifetime expired",
+        "Nitro sandbox has finished",
+        "Nitro sandbox is terminating",
+        "Nitro sandbox was removed",
+        "Nitro Job identity changed",
+        "unexpected Nitro sandbox pod ownership or runtime",
+        "Nitro EKS readiness read was not authorized",
+        "Nitro EKS readiness read failed",
+        "Nitro EKS readiness watch failed",
+        "Nitro EKS response too large",
+        "invalid Nitro EKS response",
+        "Nitro EKS watch event too large",
+        "invalid Nitro EKS watch event",
+        "incomplete Nitro EKS pod list",
+        "missing Nitro EKS pod resource version",
+    ]
+    .into_iter()
+    .find(|message| *message == error.message)
+}
+
 struct Connection {
     child: Child,
     input: ChildStdin,
@@ -197,7 +234,9 @@ impl Connection {
             Outcome::Ok(value) => Ok(value),
             Outcome::Error(mut error) => {
                 if self.protocol_version == CREDENTIAL_PROTOCOL_VERSION {
-                    error.message = "provider operation failed".into();
+                    error.message = nitro_startup_error(name, &error)
+                        .unwrap_or("provider operation failed")
+                        .into();
                 }
                 Err(error.into())
             }
@@ -822,7 +861,21 @@ impl Registry {
         pin: &Pin,
         environment: Option<&ProcessEnvironment>,
     ) -> Option<ProcessEnvironment> {
-        let catalog = self.catalog.as_ref()?;
+        let Some(catalog) = self.catalog.as_ref() else {
+            // A local installed AWS provider needs the operator's trusted runtime
+            // paths, even when the broker supplies credentials in a private frame.
+            // Do not persist these paths on connections or inherit AWS secrets.
+            if pin.name == "aws" {
+                let mut environment = environment?.clone();
+                for key in ["MAGICMTN_AWS_PYTHON", "MAGICMTN_AWS_KUBECTL"] {
+                    if let Ok(value) = std::env::var(key) {
+                        environment.values.entry(key.into()).or_insert(value);
+                    }
+                }
+                return Some(environment);
+            }
+            return None;
+        };
         let mut values = catalog
             .iter()
             .find(|release| release.installed.pin() == *pin)
@@ -912,6 +965,27 @@ impl Registry {
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn nitro_startup_errors_are_allowlisted_without_forwarding_arbitrary_details() {
+        let mut error = ProviderError {
+            code: ErrorCode::UpstreamUnavailable,
+            retryable: false,
+            message: "Nitro sandbox image could not be pulled".into(),
+        };
+        assert_eq!(
+            nitro_startup_error("aws", &error),
+            Some("Nitro sandbox image could not be pulled")
+        );
+        assert_eq!(nitro_startup_error("other", &error), None);
+        error.retryable = true;
+        assert_eq!(nitro_startup_error("aws", &error), None);
+        error.retryable = false;
+        error.message.push_str(": secret upstream details");
+        assert_eq!(nitro_startup_error("aws", &error), None);
+        error.message = "Nitro exec failed; reconcile before retrying".into();
+        assert_eq!(nitro_startup_error("aws", &error), None);
+    }
 
     #[test]
     fn retained_chat_translates_history_without_changing_public_input() {
