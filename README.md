@@ -36,7 +36,7 @@ curl -fsSL https://magicmtn.ai/install.sh | sh
 On macOS, you can also use Homebrew.
 
 ```sh
-brew install UseMagicMtn/tap/magic
+brew install useMagicMtn/tap/magic
 ```
 
 See [Install from source](#install-from-source) and [Install with Nix](#install-with-nix) for more options.
@@ -63,13 +63,12 @@ To run sandboxes in your own Modal account, install the provider from the MagicM
 magic provider install modal
 ```
 
-Install the Modal SDK for the `python3` used by the server's provider processes, create a Modal app named `magicmtn`, and prepare a sandbox image. [Python setup](https://github.com/useMagicMtn/provider-modal/blob/main/USAGE.md#install-the-modal-sdk) · [Image preparation](https://github.com/useMagicMtn/provider-modal/blob/main/USAGE.md#prepare-a-sandbox-image)
+Install the Modal SDK for the `python3` used by the server's provider processes and create a Modal app named `magicmtn`. [Python setup](https://github.com/useMagicMtn/provider-modal/blob/main/USAGE.md#install-the-modal-sdk)
 
-When switching from MagicMtn Cloud, run `magic logout`. Start the local server in its own terminal with a mapping from the exact OCI image digest to its prepared Modal image ID.
+When switching from MagicMtn Cloud, run `magic logout`. Start the local server in its own terminal.
 
 ```sh
-MAGICMTN_MODAL_PREPARED_IMAGES='{"registry.example/sandbox@sha256:YOUR_DIGEST":"im-YOUR_IMAGE_ID"}' \
-  magic server start
+magic server start
 ```
 
 Create an API token in your Modal workspace and save it in a private file named `modal-credentials.json`. [Modal API tokens](https://modal.com/docs/guide/workspaces)
@@ -81,15 +80,26 @@ Create an API token in your Modal workspace and save it in a private file named 
 }
 ```
 
-In another terminal, use Credential Protocol v2 to verify and store the token in MagicMtn's encrypted credential store. Then start Pi.
+In another terminal, verify and store the token, prepare the bundled Canonical image on Modal, and start Pi.
 
 ```sh
 magic --local provider configure modal --secret-file ./modal-credentials.json
+magic --local images list
+magic --local images prepare canonical --provider modal
 magic agents install pi
 pi
 ```
 
-In Pi, use `/login` to connect your inference provider and `/model` to choose a model. Ask Pi to use `magic_sandbox_create` with provider `modal` and the same digest-pinned image reference, then run `pwd` using `magic_sandbox_exec`.
+In Pi, use `/login` to connect your inference provider and `/model` to choose a model. Run `/magic new` to select a prepared image and provider. Pi can run commands and work with files in the sandbox through the MagicMtn tools.
+
+To use your own image, register and prepare it without editing Canonical:
+
+```sh
+magic --local images add my-dev --from ghcr.io/my-org/dev:1.0
+magic --local images prepare my-dev --provider modal
+```
+
+The image must include the sandbox runtime and Pi; see [custom images](docs/local-server.md#add-a-custom-image). Preparation validates the image and saves its Modal image ID locally, so users do not maintain image mappings.
 
 ## Install from source
 

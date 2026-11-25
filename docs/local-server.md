@@ -10,19 +10,10 @@ Install the [MagicMtn CLI](../README.md#install-from-source) and [Apple Containe
 container system start
 ```
 
-Install the Apple Container provider and MagicMtn Canonical image:
+Install the Apple Container provider:
 
 ```sh
 magic provider install apple-container
-```
-
-If the registry download fails, install the same Apple silicon package from its versioned archive. Verify the archive before installing it.
-
-```sh
-archive="$(mktemp -d)/apple-container.tar.gz"
-curl -fsSL -o "$archive" https://magicmtn-provider-registry-993499103295.s3.us-east-2.amazonaws.com/providers/apple-container/0.1.2/macos-aarch64.tar.gz
-printf '%s  %s\n' 0e112470665f9d38656a800ea264596cf5f9d51ba40eca92bb94c6b5ed412e50 "$archive" | shasum -a 256 -c - &&
-  magic provider install --file "$archive"
 ```
 
 ## Start the server
@@ -39,17 +30,38 @@ Starting the server selects local mode for the CLI and Pi extension. Commands us
 
 ## Create and use a sandbox
 
-In another terminal, create a sandbox with a small Alpine image, run a command, and clean up.
+In another terminal, list the local image catalog and prepare the bundled Canonical image for Apple Container:
 
 ```sh
-sandbox_id=$(magic --local computer new --image alpine:3.24.1)
+magic --local images list
+magic --local images prepare canonical --provider apple-container
+```
+
+Preparation downloads the immutable image for your machine and checks the sandbox runtime, Pi, user, and workspace. The prepared artifact is saved in the local deployment and reused. Create a Canonical sandbox, run a command, and clean up.
+
+```sh
+sandbox_id=$(magic --local computer new --image canonical)
 magic --local computer exec "$sandbox_id" -- /bin/echo "hello from the sandbox"
 magic --local computer terminate "$sandbox_id" --yes
 ```
 
 To use the bundled Canonical image, run `magic --local computer new`. Use `magic --local images list` to list available images and `magic --local computer list` to list running sandboxes. To inspect a specific sandbox, run `magic --local computer show SANDBOX_ID --format json`.
 
-Apple Container sandboxes use an isolated network by default. The host pulls sandbox images as needed. A custom image reference can use a registry tag or an immutable digest.
+## Add a custom image
+
+Register an existing image without changing Canonical:
+
+```sh
+magic --local images add my-dev --from ghcr.io/my-org/dev:1.0
+magic --local images prepare my-dev --provider apple-container
+magic --local computer new --image my-dev
+```
+
+Registration resolves the tag to immutable platform digests. Reusing a name with different contents is rejected; choose a new name for another image version. The image must be readable from its registry and contain Python, Pi, the executable MagicMtn sandbox runtime at `/usr/local/bin/magicmtn-sandbox-agent`, and a writable `/workspace` for the `sandbox` user with UID and GID 10001. Preparation validates these requirements without modifying your image. Images can be built independently using the [sandbox runtime installer](../runtime/install.sh).
+
+For a configured Modal provider, use `--provider modal` with the same `images prepare` command, then `magic --local computer new --image my-dev --provider modal`. Modal selects the image's AMD64 manifest and saves its imported image ID locally. Provider mappings and credentials stay with your local deployment.
+
+`magic --local images list` shows registered images and preparation status per provider, rather than the container runtime's entire image inventory. Listing and registering images work without starting the server; preparation uses the running server and its configured provider connection. Use `--format json` for the catalog as JSON.
 
 ## Use Pi with sandbox tools
 
@@ -60,7 +72,7 @@ magic agents install pi
 pi
 ```
 
-Pi stays on your computer and uses its own model and provider login. Select your model with `/model`. Use `/magic new` to create a sandbox and `/magic view` to manage existing sandboxes. Pi can create, inspect, execute commands in, read and write files in, and terminate sandboxes through the MagicMtn tools. Its built-in shell and file tools continue to work on your computer.
+Pi stays on your computer and uses its own model and provider login. Select your model with `/model`. Use `/magic new` to choose a prepared image and provider and create a sandbox and `/magic view` to manage existing sandboxes. Pi can create, inspect, execute commands in, read and write files in, and terminate sandboxes through the MagicMtn tools. Its built-in shell and file tools continue to work on your computer.
 
 ## Restart and clean up
 

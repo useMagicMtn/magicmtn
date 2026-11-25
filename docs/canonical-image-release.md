@@ -8,7 +8,7 @@ Run **Publish Canonical image** on `main` when updating the image. It builds and
 
 Run **Publish CLI binaries** on `main` to release the CLI. It verifies anonymous access to both committed image digests before building. Every CLI binary embeds the same committed lock, keeping release source clean and image selection consistent with Cloud’s pinned source revision.
 
-The lock is `sdk/rust/magicmtn-sdk/src/canonical-image.json`. It maps OCI platforms to immutable manifest digests. The container runtime selects and stores the host's image locally. Provider installation pulls the pinned ARM64 image into Apple Container. Local CLI and MCP creation use the server's default, which is frozen in the sandbox record before the provider launches it. Replaying an existing creation intent retains its saved digest.
+The lock is `sdk/rust/magicmtn-sdk/src/canonical-image.json`. It maps OCI platforms to immutable manifest digests. The local image catalog includes Canonical by default. `magic --local images prepare canonical --provider PROVIDER` selects and prepares the platform supported by that provider. Apple Container uses the host architecture; Modal uses AMD64. Local CLI and MCP creation use the server's default, which is frozen in the sandbox record before the provider launches it. Replaying an existing creation intent retains its saved digest.
 
 ## GHCR access
 
@@ -39,10 +39,19 @@ The publisher validates the archives and source hashes before uploading. It writ
 
 ## Custom images and providers
 
-`magic computer new --image REFERENCE` passes the user's selection to the provider. Explicit selections bypass Canonical setup. Apple Container owns registry authentication, downloads, and storage for custom OCI images.
+Register and prepare custom images through the local catalog:
 
-Firecracker owns prepared VM root filesystems and its image mapping through `MAGICMTN_FIRECRACKER_IMAGES`; map the Canonical reference to a prepared VM image to select it on that provider. `magic --local images list` shows the local provider's inventory. `magic images list` shows enabled images in your Cloud workspace.
+```sh
+magic --local images add my-dev --from ghcr.io/my-org/dev:1.0
+magic --local images prepare my-dev --provider modal
+magic --local computer new --image my-dev --provider modal
+```
 
+The source tag is resolved once to immutable platform manifests. Preparation imports and validates the selected platform on the provider, saves its artifact ID locally, and reuses it on repeated calls. Prepared records are scoped to the connection, configuration generation, provider binary, platform, and digest. Canonical is refreshed when the local server starts with a new bundled release; existing sandbox records keep their launch image and provider configuration.
+
+Custom images provide Python, Pi, `/bin/sh`, an executable `/usr/local/bin/magicmtn-sandbox-agent`, and a `sandbox` user with UID and GID 10001 that can write to `/workspace`. Build your image independently using [runtime/install.sh](../runtime/install.sh); editing or extending Canonical is optional. A preparation failure leaves the image unavailable for named-image launches.
+
+`magic --local images list` shows the registered image catalog and preparation status per provider. `magic images list` shows enabled images in your Cloud workspace. Legacy providers that use preconfigured VM root filesystems or snapshots continue to accept explicit image references through their existing launch interface.
 
 ## Review bundled software
 
