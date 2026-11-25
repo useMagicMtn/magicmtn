@@ -21,7 +21,7 @@ Distributed inference and sandboxed compute platform for agents. The open-source
 
 https://github.com/user-attachments/assets/e42832f4-cd24-4d25-9cae-eacd053c44f1
 
-*Launch a cloud agent from Pi, disconnect while it keeps running, then SSH into the machine MagicMtn provisioned.*
+_Launch a cloud agent from Pi, disconnect while it keeps running, then SSH into the machine MagicMtn provisioned._
 
 ## Getting Started
 
@@ -53,7 +53,9 @@ pi
 
 In Pi, run `/magic new` to start a managed workspace. Press **Ctrl+]** to disconnect while Pi keeps running, then use `/magic view` and choose **Resume** to rejoin. [Pi setup guide](https://magicmtn.ai/docs/coding-agents/pi/)
 
-### Use Modal as a sandbox provider
+### Example: use Modal as a sandbox provider
+
+This example shows how you can run MagicMtn pointing to your own sandbox/VMs provider — in this case using Modal. MagicMtn manages the machines.
 
 To run sandboxes in your own Modal account, install the provider from the MagicMtn Registry. [Modal provider](https://magicmtn.ai/registry/modal)
 

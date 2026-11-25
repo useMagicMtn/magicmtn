@@ -1,8 +1,45 @@
-//! Local image inventory and installation of the pinned Canonical release.
+//! Cloud and local image inventories and installation of the pinned Canonical release.
 use anyhow::{bail, Context, Result};
 use std::collections::BTreeMap;
 
-pub(crate) fn list() -> Result<()> {
+pub(crate) async fn list_cloud(api: &crate::Api) -> Result<()> {
+    anyhow::ensure!(api.token.is_some(), "sign in first with `magic login`");
+    #[derive(serde::Deserialize)]
+    struct Image {
+        id: String,
+        display_name: String,
+        description: String,
+        is_default: bool,
+        status: String,
+    }
+    #[derive(serde::Deserialize)]
+    struct Inventory {
+        images: Vec<Image>,
+    }
+    let response = api.request(reqwest::Method::GET, "v1/images", None).await?;
+    let inventory: Inventory =
+        serde_json::from_value(response).context("reading Cloud image inventory")?;
+    println!(
+        "{:<36} | {:<32} | {:<7} | description",
+        "id", "name", "default"
+    );
+    for image in inventory
+        .images
+        .into_iter()
+        .filter(|image| image.status == "enabled")
+    {
+        println!(
+            "{:<36} | {:<32} | {:<7} | {}",
+            crate::table_cell(&image.id, 36),
+            crate::table_cell(&image.display_name, 32),
+            if image.is_default { "yes" } else { "" },
+            crate::table_cell(&image.description, 80),
+        );
+    }
+    Ok(())
+}
+
+pub(crate) fn list_local() -> Result<()> {
     match std::env::consts::OS {
         "macos" => {
             let status = std::process::Command::new("container")

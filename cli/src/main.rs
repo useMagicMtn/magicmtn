@@ -80,7 +80,11 @@ impl Cli {
             });
         }
         if let Some(selection) = mode::selected()? {
-            return Ok(selection);
+            if !matches!(self.command, Some(Commands::Images { .. }))
+                || matches!(selection, mode::Selection::Cloud { .. })
+            {
+                return Ok(selection);
+            }
         }
         Ok(mode::Selection::Cloud {
             server: std::env::var("MAGICMTN_SERVER_URL")
@@ -195,7 +199,7 @@ enum Commands {
 
 #[derive(Subcommand)]
 enum ImageCommands {
-    /// List sandbox images
+    /// List available Cloud images, or local images with --local
     List,
 }
 
@@ -764,10 +768,8 @@ async fn run(mut cli: Cli) -> Result<()> {
         update::run().await?;
         return Ok(());
     }
-    if let Commands::Images { command } = &command {
-        return match command {
-            ImageCommands::List => images::list(),
-        };
+    if cli.local && matches!(&command, Commands::Images { .. }) {
+        return images::list_local();
     }
     if let Commands::Provider { command } = &command {
         match command {
@@ -825,6 +827,9 @@ async fn run(mut cli: Cli) -> Result<()> {
         api.token = authentication::Credentials::new()?.load(&api.base)?;
     }
     match command {
+        Commands::Images {
+            command: ImageCommands::List,
+        } => return images::list_cloud(&api).await,
         Commands::Provider {
             command:
                 ProviderCommands::Configure {
