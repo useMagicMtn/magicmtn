@@ -164,7 +164,7 @@ pub(crate) async fn install_file(file: &Path) -> Result<()> {
         .context("reading provider package")?;
     ensure!(
         bytes.len() <= 320 * 1024 * 1024,
-        "provider package exceeds 64 MiB"
+        "provider package exceeds 320 MiB"
     );
     install_package(&bytes, None).await
 }
