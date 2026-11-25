@@ -142,7 +142,8 @@ mod tests {
         assert!(contains("apple-container"));
         assert!(contains("aws"));
         assert!(contains("firecracker"));
-        for name in ["modal", "fireworks", "e2b", "future-private-provider"] {
+        assert!(contains("modal"));
+        for name in ["fireworks", "e2b", "future-private-provider"] {
             assert!(!contains(name));
         }
         assert!(crate::library::catalog()["inference_providers"]

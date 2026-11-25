@@ -49,6 +49,13 @@ pub struct ExecResult {
 }
 
 pub trait SandboxBackend {
+    /// Materialize and validate an image for this provider's sandbox platform.
+    fn prepare_image<'a>(
+        &'a self,
+        _images: &'a std::collections::BTreeMap<String, image_registry::Image>,
+    ) -> BoxFuture<'a, image_registry::PreparedImage> {
+        Box::pin(async { anyhow::bail!("this provider does not support image preparation") })
+    }
     fn create<'a>(&'a self, template: &'a str) -> BoxFuture<'a, ProviderSandbox>;
     /// Maximum sandbox lifetime in seconds. Providers without a native lifetime
     /// control may use the service's durable expiry and termination worker.

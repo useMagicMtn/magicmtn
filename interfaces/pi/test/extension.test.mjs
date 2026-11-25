@@ -12,7 +12,7 @@ const connection = { id: "7f0b4271-bf76-4de0-8e76-ddd1b0e5ee13", display_name: "
 const model = { id: "5269bd6d-e31d-42e8-812f-989be2bb3e57", display_name: "Model", provider: "fireworks" };
 const workspace = { id: "d215125b-4896-4ca4-a36f-aefdeea095fb", provider: "exe", status: "running", created_at: "2026-10-14" };
 
-async function fixture(t, { image = true, workspaces = [], failCreate = false, failAttach = false, interruptAttach = false, removeCliBeforeAttach = false, signedIn = true, local = false, models = [model], connections = [connection], defaults = {} } = {}) {
+async function fixture(t, { image = true, workspaces = [], failCreate = false, failAttach = false, interruptAttach = false, removeCliBeforeAttach = false, signedIn = true, local = false, localImages = [{name:"canonical",is_default:true,preparations:[{provider:"modal",ready:true}]}], models = [model], connections = [connection], defaults = {} } = {}) {
   const directory = mkdtempSync(join(tmpdir(), "magicmtn-extension-"));
   const log = join(directory, "calls.jsonl");
   writeFileSync(log, "");
@@ -52,6 +52,7 @@ if(args[1]==='catalog')result=JSON.parse(fs.readFileSync(${JSON.stringify(catalo
 if(args[1]==='defaults'){const c=JSON.parse(fs.readFileSync(${JSON.stringify(catalogPath)},'utf8'));c.defaults={model_id:args[args.indexOf('--model')+1]};fs.writeFileSync(${JSON.stringify(catalogPath)},JSON.stringify(c));result={saved:true}};
 if(args[1]==='terminate'){const items=JSON.parse(fs.readFileSync(${JSON.stringify(workspacesPath)},'utf8'));fs.writeFileSync(${JSON.stringify(workspacesPath)},JSON.stringify(items.filter(w=>w.id!==args[2])));result={status:'ended'}};
 if(args[1]==='list')result={workspaces:JSON.parse(fs.readFileSync(${JSON.stringify(workspacesPath)},'utf8'))};
+if(args[0]==='images' && args[1]==='list')result={images:${JSON.stringify(localImages)}};
 if(args[1]==='create'){if(${failCreate}){console.error('Creation uncertain; inspect workspace');process.exit(1)}if(${removeCliBeforeAttach})fs.unlinkSync(process.argv[1]);result=${JSON.stringify(workspace)}}
 if(args[1]==='inference')result={baseUrl:'https://magic.test/v1/pi/agent',apiKey:'scoped',api:'openai-completions',models:[{...JSON.parse(fs.readFileSync(${JSON.stringify(catalogPath)},'utf8')).models.find(m=>m.id===args[args.indexOf('--model')+1]),name:'Managed model',contextWindow:65536,maxTokens:8192}],expiresIn:86400};
 console.log(JSON.stringify(result));`;
@@ -474,9 +475,8 @@ test("local startup keeps Pi's own model and loads sandbox tools without Cloud c
 
 test("local menu creates a sandbox without model connections, account catalogs, or terminal takeover", async (t) => {
   const f = await fixture(t, { local: true });
-  f.choices.push("python:3.13-alpine");
   await f.command.handler("new", f.ctx);
-  assert.deepEqual(f.calls(), [["pi","account"],["--local","mcp","tools"],["--local","mcp","call","sandbox_create"]]);
+  assert.deepEqual(f.calls(), [["pi","account"],["--local","mcp","tools"],["--local","images","list","--format","json"],["--local","mcp","call","sandbox_create"]]);
   assert.deepEqual(f.terminalEvents, []);
   assert.match(f.notices[0].message, /Created sandbox/);
 });

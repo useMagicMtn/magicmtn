@@ -26,4 +26,6 @@ pub mod public_providers;
 pub mod sandboxes;
 pub mod schema;
 
+#[cfg(feature = "sqlite")]
+pub mod sandbox_images;
 pub mod sandbox_storage;

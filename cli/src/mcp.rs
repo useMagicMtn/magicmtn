@@ -47,7 +47,7 @@ fn tools(local: bool) -> Value {
     if local {
         let create = &mut definitions[1];
         create["description"] = json!("Create a sandbox on the local MagicMtn server. Keep its ID and inspect that ID after uncertain results before retrying. Pi and its model credentials stay on your computer.");
-        create["inputSchema"]["properties"]["image"] = json!({"type":"string", "description":"Custom OCI image reference; defaults to MagicMtn Canonical"});
+        create["inputSchema"]["properties"]["image"] = json!({"type":"string", "description":"Prepared image catalog name, or explicit OCI reference; defaults to canonical"});
         definitions[3]["inputSchema"]["properties"]["cwd"] = json!({"type":"string","default":"/"});
         let create = &mut definitions[1];
         create["inputSchema"]["properties"]["provider"] =

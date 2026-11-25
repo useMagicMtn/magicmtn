@@ -659,6 +659,21 @@ async fn canonical_default_is_frozen_before_dispatch_and_survives_restart() -> a
     let path = directory.path().join("canonical.sqlite3");
     let database = Database::open(&path).await?;
     database.bootstrap(&registry).await?;
+    magicmtn_engine::sandbox_images::seed(&database).await?;
+    let binding = database.binding(None, None, "test-local").await?;
+    let platform = magicmtn_sdk::image_registry::local_platform()?;
+    magicmtn_engine::sandbox_images::save(
+        &database,
+        "canonical",
+        &binding,
+        &magicmtn_sdk::image_registry::PreparedImage {
+            image: magicmtn_sdk::image_registry::canonical(platform)?,
+            platform: platform.into(),
+            artifact: "prepared-fixture".into(),
+            configuration: Default::default(),
+        },
+    )
+    .await?;
     let app = router(
         Store::Sqlite(database.clone()),
         registry.clone(),

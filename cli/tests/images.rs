@@ -103,24 +103,13 @@ async fn cloud_inventory_does_not_fall_back_on_an_expired_session() {
     server.abort();
 }
 
-#[cfg(target_os = "macos")]
 #[test]
-fn local_inventory_needs_neither_server_nor_cloud_credentials() {
-    use std::os::unix::fs::PermissionsExt;
+fn local_catalog_includes_canonical_without_a_server_runtime_or_cloud_credentials() {
     let home = tempfile::tempdir().unwrap();
-    let bin = home.path().join("bin");
-    fs::create_dir(&bin).unwrap();
-    let runtime = bin.join("container");
-    fs::write(
-        &runtime,
-        "#!/bin/sh\n[ \"$*\" = 'image list' ] || exit 9\necho local-image\n",
-    )
-    .unwrap();
-    fs::set_permissions(&runtime, fs::Permissions::from_mode(0o755)).unwrap();
     let output = command(home.path())
-        .env("PATH", &bin)
+        .env("PATH", home.path())
         .env("MAGICMTN_SERVER_URL", "invalid-server-url")
-        .args(["--local", "images", "list"])
+        .args(["--local", "images", "list", "--format", "json"])
         .output()
         .unwrap();
     assert!(
@@ -128,21 +117,83 @@ fn local_inventory_needs_neither_server_nor_cloud_credentials() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(String::from_utf8(output.stdout).unwrap(), "local-image\n");
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["images"].as_array().unwrap().len(), 1);
+    assert_eq!(value["images"][0]["name"], "canonical");
+    assert_eq!(value["images"][0]["is_default"], true);
+    assert_eq!(
+        value["images"][0]["manifests"].as_object().unwrap().len(),
+        2
+    );
+    assert!(value["images"][0]["preparations"]
+        .as_array()
+        .unwrap()
+        .is_empty());
 }
 
-#[cfg(target_os = "linux")]
 #[test]
-fn local_inventory_lists_firecracker_mapping_without_a_server() {
+fn add_and_prepare_require_explicit_local_scope() {
     let home = tempfile::tempdir().unwrap();
+    for args in [
+        vec!["images", "add", "dev", "--from", "ghcr.io/example/dev:1"],
+        vec!["images", "prepare", "canonical", "--provider", "modal"],
+    ] {
+        let output = command(home.path()).args(args).output().unwrap();
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("use --local"));
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn prepare_uses_only_the_local_server_and_private_credential() {
+    use axum::routing::post;
+    use std::os::unix::fs::PermissionsExt;
+    let app = Router::new().route(
+        "/v1/images/my-dev/prepare",
+        post(
+            |headers: axum::http::HeaderMap, Json(body): Json<serde_json::Value>| async move {
+                assert_eq!(headers["authorization"], "Bearer local-only-token");
+                assert_eq!(body, json!({"provider":"modal"}));
+                Json(json!({"prepared":{"platform":"linux/amd64","artifact":"im-test"}}))
+            },
+        ),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let home = tempfile::tempdir().unwrap();
+    let local = home.path().join("server");
+    fs::create_dir(&local).unwrap();
+    let connection = local.join("connection.json");
+    fs::write(
+        &connection,
+        json!({"url":url,"token":"local-only-token"}).to_string(),
+    )
+    .unwrap();
+    fs::set_permissions(connection, fs::Permissions::from_mode(0o600)).unwrap();
     let output = command(home.path())
-        .env(
-            "MAGICMTN_FIRECRACKER_IMAGES",
-            r#"{"example/image@sha256:123":"prepared-vm"}"#,
-        )
-        .args(["--local", "images", "list"])
+        .env("MAGICMTN_LOCAL_DIRECTORY", local)
+        .env("MAGICMTN_SERVER_URL", "invalid-cloud-url")
+        .args([
+            "--local",
+            "images",
+            "prepare",
+            "my-dev",
+            "--provider",
+            "modal",
+        ])
         .output()
         .unwrap();
-    assert!(output.status.success());
-    assert!(String::from_utf8_lossy(&output.stdout).contains("prepared-vm"));
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("my-dev is ready on modal (linux/amd64)")
+    );
+    server.abort();
 }

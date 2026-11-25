@@ -200,7 +200,22 @@ enum Commands {
 #[derive(Subcommand)]
 enum ImageCommands {
     /// List available Cloud images, or local images with --local
-    List,
+    List {
+        #[arg(long, value_enum, default_value = "human")]
+        format: ShowFormat,
+    },
+    /// Register a custom OCI image in the local deployment
+    Add {
+        name: String,
+        #[arg(long)]
+        from: String,
+    },
+    /// Prepare a registered image on a connected sandbox provider
+    Prepare {
+        name: String,
+        #[arg(long)]
+        provider: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -596,6 +611,9 @@ impl Api {
         body: Option<Value>,
     ) -> Result<Value> {
         let mut request = self.authenticated(self.client.request(method, self.base.join(path)?));
+        if self.local && path.starts_with("v1/images/") && path.ends_with("/prepare") {
+            request = request.timeout(std::time::Duration::from_secs(1800));
+        }
         if let Some(body) = body {
             request = request.json(&body);
         }
@@ -768,8 +786,21 @@ async fn run(mut cli: Cli) -> Result<()> {
         update::run().await?;
         return Ok(());
     }
-    if cli.local && matches!(&command, Commands::Images { .. }) {
-        return images::list_local();
+    if let Commands::Images { command } = &command {
+        if cli.local && !matches!(command, ImageCommands::Prepare { .. }) {
+            let mode::Selection::Local { directory } = cli.target()? else {
+                unreachable!()
+            };
+            return match command {
+                ImageCommands::List { format } => images::list_local(&directory, *format).await,
+                ImageCommands::Add { name, from } => images::add(&directory, name, from).await,
+                _ => unreachable!(),
+            };
+        }
+        anyhow::ensure!(
+            cli.local || matches!(command, ImageCommands::List { .. }),
+            "image registration and preparation use --local"
+        );
     }
     if let Commands::Provider { command } = &command {
         match command {
@@ -828,8 +859,11 @@ async fn run(mut cli: Cli) -> Result<()> {
     }
     match command {
         Commands::Images {
-            command: ImageCommands::List,
-        } => return images::list_cloud(&api).await,
+            command: ImageCommands::List { format },
+        } => return images::list_cloud(&api, format).await,
+        Commands::Images {
+            command: ImageCommands::Prepare { name, provider },
+        } => return images::prepare(&api, &name, &provider).await,
         Commands::Provider {
             command:
                 ProviderCommands::Configure {

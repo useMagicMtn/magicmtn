@@ -32,6 +32,18 @@ impl Image {
     }
 }
 
+/// A provider-owned artifact prepared from one immutable OCI platform image.
+/// Configuration contains non-secret launch settings, never registry credentials.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PreparedImage {
+    pub image: Image,
+    pub platform: String,
+    pub artifact: String,
+    #[serde(default)]
+    pub configuration: std::collections::BTreeMap<String, String>,
+}
+
 /// The Canonical image release bundled with this version of MagicMtn.
 /// CLI releases embed a new lock only after verifying anonymous registry pulls.
 pub fn canonical(platform: &str) -> anyhow::Result<Image> {

@@ -31,9 +31,18 @@ export async function localMenu(action, ctx, request, terminal) {
     return;
   }
   if (["new", "New sandbox"].includes(action)) {
-    const image = await ctx.ui.input("Sandbox image", "python:3.13-alpine");
-    if (image === undefined) return;
-    const sandbox = await call("sandbox_create", { image: image || "python:3.13-alpine" });
+    const catalog = await request(["--local", "images", "list", "--format", "json"]);
+    const choices = catalog.images.flatMap((image) => image.preparations.filter((preparation) => preparation.ready)
+      .map((preparation) => ({ image: image.name, provider: preparation.provider,
+        label: `${image.name}${image.is_default ? " · default" : ""} · ${preparation.provider}` })));
+    if (!choices.length) {
+      ctx.ui.notify("Prepare an image with magic --local images prepare canonical --provider PROVIDER, then run /magic new.", "info");
+      return;
+    }
+    const selection = choices.length === 1 ? choices[0].label : await ctx.ui.select("Sandbox image and provider", choices.map((choice) => choice.label));
+    const choice = choices.find((item) => item.label === selection);
+    if (!choice) return;
+    const sandbox = await call("sandbox_create", { image: choice.image, provider: choice.provider });
     ctx.ui.notify(`Created sandbox ${sandbox.id}. Pi can use the MagicMtn sandbox tools.`, "info");
     return;
   }

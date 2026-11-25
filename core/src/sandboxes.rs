@@ -226,7 +226,7 @@ pub async fn create_record(
 ) -> Result<Value, (StatusCode, String)> {
     let s = s.into();
     let id = body.idempotency_key.unwrap_or_else(Uuid::new_v4);
-    if body.template.is_empty() {
+    if body.template.is_empty() && matches!(&s.store, Store::Postgres(_)) {
         if let Some(default) = policy.default_template() {
             // A retry retains its original image across upgrades to the default.
             body.template = match s.store.get(id).await.map_err(failed)? {
@@ -235,7 +235,9 @@ pub async fn create_record(
             };
         }
     }
-    let specification = image_specification(&body.template, id)?;
+    if !body.template.is_empty() || matches!(&s.store, Store::Postgres(_)) {
+        image_specification(&body.template, id)?;
+    }
     let snapshot_key = match workspace.as_ref().and_then(|w| w["kind"].as_str()) {
         Some("workload") => "_magicmtn_workload",
         Some("general-agent") => "_magicmtn_general_agent",
@@ -259,6 +261,19 @@ pub async fn create_record(
     if binding.pin.name != body.provider {
         return Err(invalid("provider differs from connection"));
     }
+    #[cfg(feature = "sqlite")]
+    let mut binding = binding;
+    #[cfg(feature = "sqlite")]
+    let image_selection = if let Store::Sqlite(db) = &s.store {
+        crate::sandbox_images::seed(db).await.map_err(failed)?;
+        let saved = s.store.get(id).await.map_err(failed)?;
+        crate::sandbox_images::resolve_launch(db, &mut binding, &mut body.template, saved.as_ref())
+            .await
+            .map_err(|error| invalid(&error.to_string()))?
+    } else {
+        None
+    };
+    let specification = image_specification(&body.template, id)?;
     crate::provider_connections::ensure_sandbox(&binding).map_err(failed)?;
     let pin = binding.pin.clone();
     if body
@@ -288,6 +303,10 @@ pub async fn create_record(
         })?;
     let mut metadata =
         json!({"_magicmtn_connection":binding,"_magicmtn_provider":pin,"_magicmtn_scope":scope});
+    #[cfg(feature = "sqlite")]
+    if let Some(name) = &image_selection {
+        metadata["_magicmtn_image_selection"] = json!(name);
+    }
     if let Some(workspace) = &workspace {
         metadata[snapshot_key] = workspace.clone();
     }
@@ -362,6 +381,10 @@ pub async fn create_record(
     metadata["provider"] = json!(pin.name);
     metadata["_magicmtn_provider"] = json!(pin);
     metadata["_magicmtn_scope"] = json!(scope);
+    #[cfg(feature = "sqlite")]
+    if let Some(name) = &image_selection {
+        metadata["_magicmtn_image_selection"] = json!(name);
+    }
     if let Some(workspace) = workspace {
         metadata[snapshot_key] = workspace;
     }

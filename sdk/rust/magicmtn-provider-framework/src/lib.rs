@@ -248,6 +248,10 @@ pub async fn run_sandbox(
     serve(provider, version, capabilities, |operation| {
         Box::pin(async move {
             match operation {
+                Operation::SandboxPrepareImage { images } => backend
+                    .prepare_image(&images)
+                    .await
+                    .map(Value::PreparedImage),
                 Operation::SandboxCreate {
                     template,
                     ttl_seconds,
@@ -322,12 +326,16 @@ pub async fn run_sandbox_with_inference(
     provider: &str,
     version: &str,
     capabilities: Capabilities,
-    backend: impl SandboxBackend + InferenceBackend + Sync,
+    backend: impl SandboxBackend + InferenceBackend,
 ) -> Result<()> {
     let backend = &backend;
     serve(provider, version, capabilities, |operation| {
         Box::pin(async move {
             match operation {
+                Operation::SandboxPrepareImage { images } => backend
+                    .prepare_image(&images)
+                    .await
+                    .map(Value::PreparedImage),
                 Operation::SandboxCreate {
                     template,
                     ttl_seconds,

@@ -19,6 +19,7 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock};
 
+pub mod images;
 mod provider_credentials;
 mod shell;
 
@@ -244,6 +245,7 @@ pub async fn run_with_ready(options: Options, ready: impl FnOnce() -> Result<()>
     // never replace its apparent state with a fresh empty database.
     ensure!(path.exists() || !options.directory.join("connection.json").exists(), "this directory has an existing server connection but no SQLite database; select a fresh MAGICMTN_LOCAL_DIRECTORY");
     let database = Database::open(&path).await?;
+    magicmtn_engine::sandbox_images::refresh_canonical(&database).await?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -290,6 +292,7 @@ pub async fn run_with_ready(options: Options, ready: impl FnOnce() -> Result<()>
         Arc::new(info.token.clone()),
         authenticate,
     ));
+    let image_routes = images::router(database.clone(), registry.clone());
     let app = router(
         store.clone(),
         registry.clone(),
@@ -297,6 +300,10 @@ pub async fn run_with_ready(options: Options, ready: impl FnOnce() -> Result<()>
         options.ttl_seconds,
     )
     .merge(credential_routes)
+    .merge(image_routes.layer(middleware::from_fn_with_state(
+        Arc::new(info.token.clone()),
+        authenticate,
+    )))
     .route(
         "/shutdown",
         post(move || {

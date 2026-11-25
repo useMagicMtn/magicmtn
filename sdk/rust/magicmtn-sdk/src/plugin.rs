@@ -14,6 +14,7 @@ pub const MANIFEST_VERSION: u32 = 1;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SandboxOperation {
+    PrepareImage,
     Create,
     Status,
     Ssh,
@@ -89,6 +90,9 @@ impl Capabilities {
     }
     pub fn supports(&self, operation: &Operation) -> bool {
         match operation {
+            Operation::SandboxPrepareImage { .. } => self
+                .sandbox_operations
+                .contains(&SandboxOperation::PrepareImage),
             Operation::Search { .. } => self.search,
             Operation::Describe | Operation::Shutdown => true,
             Operation::SandboxCreate { .. } => {
@@ -241,6 +245,9 @@ pub struct Request {
 pub enum Operation {
     Describe,
     Shutdown,
+    SandboxPrepareImage {
+        images: std::collections::BTreeMap<String, crate::image_registry::Image>,
+    },
     Search {
         request: SearchRequest,
     },
@@ -299,6 +306,7 @@ pub enum Operation {
 impl Operation {
     pub fn kind(&self) -> &'static str {
         match self {
+            Self::SandboxPrepareImage { .. } => "sandbox_prepare_image",
             Self::Search { .. } => "search",
             Self::Describe => "describe",
             Self::Shutdown => "shutdown",
@@ -323,6 +331,17 @@ impl Operation {
 mod ttl_tests {
     use super::Operation;
     use serde_json::json;
+
+    #[test]
+    fn image_preparation_is_an_explicit_capability_and_pins_platform_images() {
+        use super::{Capabilities, SandboxOperation};
+        let frame = json!({"name":"sandbox_prepare_image","arguments":{"images":{"linux/amd64":{"repository":"example/image","digest":format!("sha256:{}","a".repeat(64))}}}});
+        let operation: Operation = serde_json::from_value(frame.clone()).unwrap();
+        assert_eq!(operation.kind(), "sandbox_prepare_image");
+        assert!(!Capabilities::sandbox(vec![SandboxOperation::Create]).supports(&operation));
+        assert!(Capabilities::sandbox(vec![SandboxOperation::PrepareImage]).supports(&operation));
+        assert_eq!(serde_json::to_value(operation).unwrap(), frame);
+    }
 
     #[test]
     fn sandbox_create_keeps_old_frames_and_carries_ttl() {
@@ -393,6 +412,7 @@ pub enum Outcome {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "value", rename_all = "snake_case")]
 pub enum Value {
+    PreparedImage(crate::image_registry::PreparedImage),
     Description(ProviderManifest),
     VerifiedAccount(String),
     Search(SearchResponse),

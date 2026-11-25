@@ -181,9 +181,6 @@ async fn install_package(bytes: &[u8], source: Option<(&Provider, &Artifact)>) -
         installed.package.arch,
     );
     drop(_lock);
-    if installed.package.name == "apple-container" {
-        crate::images::ensure_canonical(&installed.package.name)?;
-    }
     Ok(())
 }
 
