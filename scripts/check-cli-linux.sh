@@ -38,7 +38,10 @@ for arch in $architectures; do
         test -s /tmp/magicmtn-check/local/connection.json || { cat /tmp/local-server.log; exit 1; }
         test -s /tmp/magicmtn-check/local/magicmtn.sqlite3
         kill -TERM "$server_pid"
-        wait "$server_pid"
+        # A server stopped with SIGTERM may report 143 rather than zero.
+        status=0
+        wait "$server_pid" || status=$?
+        test "$status" = 0 || test "$status" = 143
         trap - EXIT
       ' \
       sh "/cli/$binary" "$version"
