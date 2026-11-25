@@ -89,7 +89,7 @@ class ReleaseTest(unittest.TestCase):
             (self.root / ("magic-" + platform)).write_bytes(self.binary)
         output = self.root / "output"
         process = types.SimpleNamespace(
-            run=mock.Mock(), check_output=mock.Mock(side_effect=["a" * 40, b"", "magic 1.0.0"]),
+            run=mock.Mock(), check_output=mock.Mock(side_effect=["a" * 40, b"", f"magic {publisher.cli_version.current(publisher.ROOT)}"]),
             CalledProcessError=subprocess.CalledProcessError, DEVNULL=subprocess.DEVNULL,
         )
         with mock.patch("sys.argv", ["publish-cli.py", "--skip-build", "--artifacts", str(self.root), "--output", str(output)]), \
@@ -118,7 +118,7 @@ class ReleaseTest(unittest.TestCase):
             (self.root / ("magic-" + platform)).write_bytes(self.binary)
         process = types.SimpleNamespace(
             run=mock.Mock(side_effect=subprocess.CalledProcessError(1, "aws")),
-            check_output=mock.Mock(side_effect=["a" * 40, b"", "magic 1.0.0"]),
+            check_output=mock.Mock(side_effect=["a" * 40, b"", f"magic {publisher.cli_version.current(publisher.ROOT)}"]),
             CalledProcessError=subprocess.CalledProcessError, DEVNULL=subprocess.DEVNULL,
         )
         with mock.patch("sys.argv", ["publish-cli.py", "--skip-build", "--artifacts", str(self.root), "--output", str(self.root / "output")]), \
