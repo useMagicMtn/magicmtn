@@ -4,6 +4,7 @@ set -eu
 cd "$(dirname "$0")/.."
 repository=$(pwd -P)
 architectures='amd64 arm64'
+version=$(python3 scripts/cli_version.py)
 case "${1:-}" in
   --native)
     case "$(uname -m)" in x86_64) architectures=amd64 ;; aarch64|arm64) architectures=arm64 ;; *) exit 1 ;; esac
@@ -21,7 +22,7 @@ for arch in $architectures; do
     podman run --rm --platform "linux/$arch" \
       -v "$repository/dist/bin:/cli:ro" "docker.io/library/$distribution" \
       sh -ec '
-        "$1" --version
+        test "$("$1" --version)" = "magic $2"
         "$1" --help >/dev/null
         "$1" mcp serve --help >/dev/null
         "$1" completion bash --print >/tmp/completion
@@ -40,6 +41,6 @@ for arch in $architectures; do
         wait "$server_pid"
         trap - EXIT
       ' \
-      sh "/cli/$binary"
+      sh "/cli/$binary" "$version"
   done
 done

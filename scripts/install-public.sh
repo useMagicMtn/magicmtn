@@ -2,7 +2,7 @@
 # Served by the application deployment, independently of the download bucket.
 set -eu
 
-base_url='https://magicmtn-cli-beta-993499103295.s3.us-east-2.amazonaws.com'
+base_url='https://magicmtn-cli-993499103295.s3.us-east-2.amazonaws.com'
 # The application embeds these public values from committed release/cli-trust.json.
 apple_team_id='@APPLE_TEAM_ID@'
 public_key=$(cat <<'MAGICMTN_PUBLIC_KEY'

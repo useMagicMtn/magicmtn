@@ -89,15 +89,20 @@ class ReleaseTest(unittest.TestCase):
             (self.root / ("magic-" + platform)).write_bytes(self.binary)
         output = self.root / "output"
         process = types.SimpleNamespace(
-            run=mock.Mock(), check_output=mock.Mock(side_effect=["a" * 40, b""]),
-            CalledProcessError=subprocess.CalledProcessError,
+            run=mock.Mock(), check_output=mock.Mock(side_effect=["a" * 40, b"", "magic 1.0.0"]),
+            CalledProcessError=subprocess.CalledProcessError, DEVNULL=subprocess.DEVNULL,
         )
         with mock.patch("sys.argv", ["publish-cli.py", "--skip-build", "--artifacts", str(self.root), "--output", str(output)]), \
-                mock.patch.object(publisher, "subprocess", process):
+                mock.patch.object(publisher, "subprocess", process), \
+                mock.patch.object(publisher, "release_objects", return_value=[]), \
+                mock.patch.object(publisher, "prune_releases"), \
+                mock.patch.object(publisher, "publish_legacy_bridge"):
             publisher.main()
-        destinations = [call.args[0][4] for call in process.run.call_args_list]
+        destinations = [call.args[0][call.args[0].index("--key") + 1] if "--key" in call.args[0] else call.args[0][4] for call in process.run.call_args_list]
         self.assertTrue(any(url.endswith("/LICENSE") for url in destinations[:-2]))
         self.assertEqual((output / "LICENSE").read_bytes(), (publisher.ROOT / "LICENSE").read_bytes())
+        for call in process.run.call_args_list[:-2]:
+            self.assertIn("--if-none-match", call.args[0])
         self.assertTrue(destinations[-2].endswith("/latest.json"))
         self.assertTrue(destinations[-1].endswith("/install.sh"))
         manifest = json.loads((output / "release.json").read_text())
@@ -114,11 +119,14 @@ class ReleaseTest(unittest.TestCase):
             (self.root / ("magic-" + platform)).write_bytes(self.binary)
         process = types.SimpleNamespace(
             run=mock.Mock(side_effect=subprocess.CalledProcessError(1, "aws")),
-            check_output=mock.Mock(side_effect=["a" * 40, b""]),
-            CalledProcessError=subprocess.CalledProcessError,
+            check_output=mock.Mock(side_effect=["a" * 40, b"", "magic 1.0.0"]),
+            CalledProcessError=subprocess.CalledProcessError, DEVNULL=subprocess.DEVNULL,
         )
         with mock.patch("sys.argv", ["publish-cli.py", "--skip-build", "--artifacts", str(self.root), "--output", str(self.root / "output")]), \
-                mock.patch.object(publisher, "subprocess", process):
+                mock.patch.object(publisher, "subprocess", process), \
+                mock.patch.object(publisher, "release_objects", return_value=[]), \
+                mock.patch.object(publisher, "prune_releases"), \
+                mock.patch.object(publisher, "publish_legacy_bridge"):
             with self.assertRaises(subprocess.CalledProcessError):
                 publisher.main()
         for call in process.run.call_args_list:

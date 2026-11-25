@@ -2,7 +2,7 @@
 # Public installer: publish this file as install.sh for the current release.
 set -eu
 
-base_url='https://magicmtn-cli-beta-993499103295.s3.us-east-2.amazonaws.com'
+base_url='https://magicmtn-cli-993499103295.s3.us-east-2.amazonaws.com'
 # Replaced with the current release identifier when publishing.
 release='@RELEASE@'
 

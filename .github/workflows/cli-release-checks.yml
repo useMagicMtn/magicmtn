@@ -78,7 +78,7 @@ jobs:
       - run: npm ci --prefix interfaces/pi --ignore-scripts --no-audit --no-fund
       - run: npm --prefix interfaces/pi test
       - run: rustup toolchain install
-      - run: python3 -m unittest discover -s scripts -p test_cli_release.py
+      - run: python3 -m unittest discover -s scripts -p 'test_cli*.py'
       - run: python3 -m unittest discover -s scripts -p test_canonical_image_release.py
       - run: cargo test --locked -p magicmtn-cli -p magicmtn-local -p magicmtn-engine --lib --bins --tests -- --test-threads=1
       - name: Verify local terminal handoff

@@ -7,7 +7,7 @@ use std::{
     process::Command,
 };
 
-const DOWNLOADS: &str = "https://magicmtn-cli-beta-993499103295.s3.us-east-2.amazonaws.com";
+const DOWNLOADS: &str = "https://magicmtn-cli-993499103295.s3.us-east-2.amazonaws.com";
 
 fn platform() -> Result<&'static str> {
     match (std::env::consts::OS, std::env::consts::ARCH) {
@@ -65,7 +65,7 @@ async fn update(base: &str, executable: &Path, platform: &str) -> Result<String>
             && release.len() <= 100
             && release
                 .bytes()
-                .all(|c| c.is_ascii_alphanumeric() || c == b'-'),
+                .all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'.'),
         "invalid release identifier"
     );
     let expected = manifest
@@ -203,7 +203,7 @@ mod tests {
 
     fn checksum_manifest(hash: &str) -> Vec<u8> {
         serde_json::to_vec(&json!({
-            "release": "test-release", "platforms": {"linux-arm64": hash}
+            "release": "1.0.0", "platforms": {"linux-arm64": hash}
         }))
         .unwrap()
     }
@@ -222,7 +222,7 @@ mod tests {
         let app = Router::new()
             .route("/latest.json", get(move || async move { manifest.clone() }))
             .route(
-                "/releases/test-release/magic-linux-arm64",
+                "/releases/1.0.0/magic-linux-arm64",
                 get(move || async move { payload.clone() }),
             );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
@@ -230,12 +230,12 @@ mod tests {
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         assert_eq!(
             update(&base, &executable, name).await?,
-            "Updated magic to release test-release"
+            "Updated magic to release 1.0.0"
         );
         assert_eq!(fs::read(&executable)?, new);
         assert_eq!(
             update(&base, &executable, name).await?,
-            "magic is already the latest version (test-release)"
+            "magic is already the latest version (1.0.0)"
         );
         server.abort();
         Ok(())
@@ -255,7 +255,7 @@ mod tests {
                 "",
             ),
             (checksum_manifest("invalid hash"), ""),
-            (br#"{"release":"test-release","platforms":{}}"#.to_vec(), ""),
+            (br#"{"release":"1.0.0","platforms":{}}"#.to_vec(), ""),
             (b"invalid JSON".to_vec(), ""),
             (
                 checksum_manifest(&sha256(b"cannot execute")),
@@ -268,7 +268,7 @@ mod tests {
             let app = Router::new()
                 .route("/latest.json", get(move || async move { manifest.clone() }))
                 .route(
-                    "/releases/test-release/magic-linux-arm64",
+                    "/releases/1.0.0/magic-linux-arm64",
                     get(move || async move { payload }),
                 );
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;

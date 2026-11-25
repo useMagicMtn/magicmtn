@@ -6,8 +6,8 @@ on:
       channel:
         description: Release channel
         type: choice
-        options: [alpha, beta, prerelease, stable]
-        default: beta
+        options: [stable]
+        default: stable
         required: true
 
 permissions:

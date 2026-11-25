@@ -19,7 +19,7 @@ TRUST = ROOT / "release/cli-trust.json"
 PLATFORMS = ("darwin-arm64", "linux-x86_64", "linux-arm64")
 CHANNELS = ("alpha", "beta", "prerelease", "stable")
 INSTALLER_URL = "https://control.magicmtn.ai/install.sh"
-DOWNLOADS = "https://magicmtn-cli-beta-993499103295.s3.us-east-2.amazonaws.com"
+DOWNLOADS = "https://magicmtn-cli-993499103295.s3.us-east-2.amazonaws.com"
 MAX_LIFETIME = 14 * 86400
 
 
