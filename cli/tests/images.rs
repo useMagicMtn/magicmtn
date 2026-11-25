@@ -39,13 +39,14 @@ async fn cloud_inventory_uses_scoped_auth_and_excludes_disabled_versions() {
         json!({"server": base, "token": "image-test-token"}).to_string(),
     )
     .unwrap();
-    // A saved local selection must not redirect the default Cloud image listing.
-    fs::write(
-        credentials.join("selection.json"),
-        json!({"mode": "local", "directory": home.path().join("stopped-local-server")}).to_string(),
-    )
-    .unwrap();
     for explicit in [false, true] {
+        // Explicit server selection overrides a saved local deployment.
+        let selected = if explicit {
+            json!({"mode":"local", "directory":home.path().join("stopped-local-server")})
+        } else {
+            json!({"mode":"cloud","server":base})
+        };
+        fs::write(credentials.join("selection.json"), selected.to_string()).unwrap();
         let mut child = command(home.path());
         child.env("MAGICMTN_SERVER_URL", &base);
         if explicit {
@@ -106,10 +107,17 @@ async fn cloud_inventory_does_not_fall_back_on_an_expired_session() {
 #[test]
 fn local_catalog_includes_canonical_without_a_server_runtime_or_cloud_credentials() {
     let home = tempfile::tempdir().unwrap();
+    let state = home.path().join(".config/magicmtn/cli");
+    fs::create_dir_all(&state).unwrap();
+    fs::write(
+        state.join("selection.json"),
+        json!({"mode":"local","directory":home.path().join(".config/magicmtn/local")}).to_string(),
+    )
+    .unwrap();
     let output = command(home.path())
         .env("PATH", home.path())
         .env("MAGICMTN_SERVER_URL", "invalid-server-url")
-        .args(["--local", "images", "list", "--format", "json"])
+        .args(["images", "list", "--format", "json"])
         .output()
         .unwrap();
     assert!(
@@ -132,7 +140,7 @@ fn local_catalog_includes_canonical_without_a_server_runtime_or_cloud_credential
 }
 
 #[test]
-fn add_and_prepare_require_explicit_local_scope() {
+fn add_and_prepare_require_a_standalone_deployment() {
     let home = tempfile::tempdir().unwrap();
     for args in [
         vec!["images", "add", "dev", "--from", "ghcr.io/example/dev:1"],
@@ -140,7 +148,7 @@ fn add_and_prepare_require_explicit_local_scope() {
     ] {
         let output = command(home.path()).args(args).output().unwrap();
         assert!(!output.status.success());
-        assert!(String::from_utf8_lossy(&output.stderr).contains("use --local"));
+        assert!(String::from_utf8_lossy(&output.stderr).contains("magic server start"));
     }
 }
 
@@ -174,17 +182,17 @@ async fn prepare_uses_only_the_local_server_and_private_credential() {
     )
     .unwrap();
     fs::set_permissions(connection, fs::Permissions::from_mode(0o600)).unwrap();
+    let state = home.path().join(".config/magicmtn/cli");
+    fs::create_dir_all(&state).unwrap();
+    fs::write(
+        state.join("selection.json"),
+        json!({"mode":"local","directory":local}).to_string(),
+    )
+    .unwrap();
     let output = command(home.path())
         .env("MAGICMTN_LOCAL_DIRECTORY", local)
         .env("MAGICMTN_SERVER_URL", "invalid-cloud-url")
-        .args([
-            "--local",
-            "images",
-            "prepare",
-            "my-dev",
-            "--provider",
-            "modal",
-        ])
+        .args(["images", "prepare", "my-dev", "--provider", "modal"])
         .output()
         .unwrap();
     assert!(

@@ -127,3 +127,6 @@ pub mod plugin;
 
 /// Shared chat task conventions and compatibility helpers.
 pub mod chat;
+
+/// Provider account setup and connection verification.
+pub mod provider_setup;

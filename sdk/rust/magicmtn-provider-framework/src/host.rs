@@ -23,7 +23,9 @@ use tokio::{
 };
 
 mod credentials;
+mod runtime;
 pub use credentials::{CredentialAdmission, CredentialRef, CredentialUpdate, PreparedCredential};
+pub use runtime::{RuntimeBundle, RuntimeCheck};
 
 pub fn valid_name(name: &str) -> bool {
     !name.is_empty()
@@ -50,6 +52,8 @@ pub struct Pin {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Package {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime: Option<RuntimeBundle>,
     pub name: String,
     pub version: String,
     pub protocol_version: u32,
@@ -391,6 +395,13 @@ fn validate_manifest(protocol: u32, manifest: &ProviderManifest) -> Result<()> {
         manifest.credential.is_some() == (protocol == CREDENTIAL_PROTOCOL_VERSION),
         "provider credential protocol mismatch"
     );
+    if let Some(setup) = &manifest.capabilities.setup {
+        ensure!(
+            manifest.credential.is_some(),
+            "provider setup requires credential protocol"
+        );
+        setup.validate_options(&Default::default())?;
+    }
     if let Some(spec) = &manifest.credential {
         spec.validate()?;
     }
@@ -664,10 +675,11 @@ impl Registry {
         let mut package = None;
         let mut executable = None;
         let mut license = None;
+        let mut runtime = None;
         let mut count = 0;
         for entry in archive.entries()? {
             count += 1;
-            ensure!(count <= 3, "too many package entries");
+            ensure!(count <= 4, "too many package entries");
             let mut entry = entry?;
             ensure!(
                 entry.header().entry_type().is_file(),
@@ -675,10 +687,12 @@ impl Registry {
             );
             let path = entry.path()?.to_string_lossy().into_owned();
             ensure!(
-                ["package.json", "provider", "LICENSE"].contains(&path.as_str()),
+                ["package.json", "provider", "LICENSE", "runtime.tar.gz"].contains(&path.as_str()),
                 "unexpected package entry"
             );
-            let limit = if path == "provider" {
+            let limit = if path == "runtime.tar.gz" {
+                runtime::MAX_RUNTIME_BYTES
+            } else if path == "provider" {
                 64 * 1024 * 1024
             } else {
                 65536
@@ -692,6 +706,10 @@ impl Registry {
                     ensure!(package.is_none(), "duplicate package manifest");
                     package = Some(serde_json::from_slice::<Package>(&body)?);
                 }
+                "runtime.tar.gz" => {
+                    ensure!(runtime.is_none(), "duplicate runtime");
+                    runtime = Some(body);
+                }
                 "provider" => {
                     ensure!(executable.is_none(), "duplicate provider");
                     executable = Some(body);
@@ -702,6 +720,10 @@ impl Registry {
                 }
             }
         }
+        ensure!(
+            package.as_ref().is_some_and(|p| p.runtime.is_some()) == runtime.is_some(),
+            "package runtime declaration differs from payload"
+        );
         let license = license.context("missing LICENSE")?;
         let package = package.context("missing package.json")?;
         let bytes = executable.context("missing provider executable")?;
@@ -750,6 +772,14 @@ impl Registry {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))?;
         }
+        if let Some(spec) = &package.runtime {
+            runtime::install(
+                spec,
+                runtime.as_deref().context("missing runtime")?,
+                staged.path(),
+            )
+            .await?;
+        }
         // Discovering capabilities runs package code before any connection has
         // authorized credentials. Use the same clean environment as dispatch.
         let client = Client::start_configured(
@@ -765,6 +795,34 @@ impl Registry {
         );
         let manifest = client.manifest.clone();
         client.shutdown().await;
+        if let Some(runtime) = &package.runtime {
+            let prefix = format!(
+                "MAGICMTN_{}_",
+                package.name.to_uppercase().replace('-', "_")
+            );
+            ensure!(
+                runtime
+                    .environment
+                    .keys()
+                    .all(|key| key.starts_with(&prefix)
+                        || matches!(
+                            key.as_str(),
+                            "SSL_CERT_FILE"
+                                | "REQUESTS_CA_BUNDLE"
+                                | "GRPC_DEFAULT_SSL_ROOTS_FILE_PATH"
+                        )),
+                "runtime setting belongs to another provider"
+            );
+            if let Some(credential) = &manifest.credential {
+                ensure!(
+                    credential
+                        .fields
+                        .iter()
+                        .all(|key| !runtime.environment.contains_key(key)),
+                    "runtime setting conflicts with provider credentials"
+                );
+            }
+        }
         std::fs::write(
             staged.path().join("package.json"),
             serde_json::to_vec_pretty(&package)?,
@@ -807,7 +865,7 @@ impl Registry {
         timeout: Duration,
         environment: Option<&ProcessEnvironment>,
     ) -> Result<Value> {
-        let configured_environment = self.configured_environment(pin, environment);
+        let configured_environment = self.configured_environment(pin, environment)?;
         let environment = configured_environment.as_ref().or(environment);
         let environment_digest = environment
             .map(|e| serde_json::to_vec(&e.values).map(|v| digest(&v)))
@@ -860,31 +918,28 @@ impl Registry {
         &self,
         pin: &Pin,
         environment: Option<&ProcessEnvironment>,
-    ) -> Option<ProcessEnvironment> {
-        let Some(catalog) = self.catalog.as_ref() else {
-            // A local installed AWS provider needs the operator's trusted runtime
-            // paths, even when the broker supplies credentials in a private frame.
-            // Do not persist these paths on connections or inherit AWS secrets.
-            if pin.name == "aws" {
-                let mut environment = environment?.clone();
-                for key in ["MAGICMTN_AWS_PYTHON", "MAGICMTN_AWS_KUBECTL"] {
-                    if let Ok(value) = std::env::var(key) {
-                        environment.values.entry(key.into()).or_insert(value);
-                    }
-                }
-                return Some(environment);
+    ) -> Result<Option<ProcessEnvironment>> {
+        let mut values = environment.cloned().unwrap_or_default().values;
+        if let Some(catalog) = &self.catalog {
+            if let Some(release) = catalog.iter().find(|r| r.installed.pin() == *pin) {
+                values.extend(release.runtime_environment.clone());
             }
-            return None;
-        };
-        let mut values = catalog
-            .iter()
-            .find(|release| release.installed.pin() == *pin)
-            .map(|release| release.runtime_environment.clone())
-            .unwrap_or_default();
-        if let Some(environment) = environment {
-            values.extend(environment.values.clone());
+            return Ok(Some(ProcessEnvironment { values }));
         }
-        Some(ProcessEnvironment { values })
+        if let Some(runtime) = &self.installed_pin(pin)?.package.runtime {
+            values.extend(runtime.environment(&self.directory(&pin.name, &pin.version)?)?);
+            return Ok(Some(ProcessEnvironment { values }));
+        }
+        // Legacy AWS packages use operator-supplied trusted runtime paths.
+        if pin.name == "aws" && environment.is_some() {
+            for key in ["MAGICMTN_AWS_PYTHON", "MAGICMTN_AWS_KUBECTL"] {
+                if let Ok(value) = std::env::var(key) {
+                    values.entry(key.into()).or_insert(value);
+                }
+            }
+            return Ok(Some(ProcessEnvironment { values }));
+        }
+        Ok(environment.cloned())
     }
 
     fn executable(&self, pin: &Pin) -> Result<(Installed, PathBuf)> {
@@ -1024,6 +1079,7 @@ mod tests {
         let registry = Registry::new(root.path().to_owned()).unwrap();
         let executable = b"retained fixture executable";
         let package = Package {
+            runtime: None,
             name: "retained".into(),
             version: "0.1.0".into(),
             protocol_version: 3,

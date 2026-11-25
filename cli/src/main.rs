@@ -80,11 +80,7 @@ impl Cli {
             });
         }
         if let Some(selection) = mode::selected()? {
-            if !matches!(self.command, Some(Commands::Images { .. }))
-                || matches!(selection, mode::Selection::Cloud { .. })
-            {
-                return Ok(selection);
-            }
+            return Ok(selection);
         }
         Ok(mode::Selection::Cloud {
             server: std::env::var("MAGICMTN_SERVER_URL")
@@ -199,7 +195,7 @@ enum Commands {
 
 #[derive(Subcommand)]
 enum ImageCommands {
-    /// List available Cloud images, or local images with --local
+    /// List images available in the selected deployment
     List {
         #[arg(long, value_enum, default_value = "human")]
         format: ShowFormat,
@@ -246,7 +242,7 @@ enum ProviderCommands {
         #[arg(long, value_name = "PACKAGE")]
         file: Option<PathBuf>,
     },
-    /// Set credentials for an installed Registry provider
+    /// Configure an installed provider account
     Configure {
         name: String,
         #[arg(
@@ -258,7 +254,12 @@ enum ProviderCommands {
         secret_string: Option<String>,
         #[arg(long, value_name = "PATH")]
         secret_file: Option<PathBuf>,
+        /// Provider setup option, such as app=magicmtn; may be repeated
+        #[arg(long = "option", value_name = "KEY=VALUE")]
+        options: Vec<String>,
     },
+    /// Check the configured account without creating provider resources
+    Verify { name: String },
     /// List locally installed providers, or full metadata as JSON
     List {
         #[arg(long, value_enum, default_value = "human")]
@@ -787,20 +788,17 @@ async fn run(mut cli: Cli) -> Result<()> {
         return Ok(());
     }
     if let Commands::Images { command } = &command {
-        if cli.local && !matches!(command, ImageCommands::Prepare { .. }) {
-            let mode::Selection::Local { directory } = cli.target()? else {
-                unreachable!()
-            };
-            return match command {
-                ImageCommands::List { format } => images::list_local(&directory, *format).await,
-                ImageCommands::Add { name, from } => images::add(&directory, name, from).await,
-                _ => unreachable!(),
-            };
+        match cli.target()? {
+            mode::Selection::Local { directory } => {
+                match command {
+                    ImageCommands::List { format } => return images::list_local(&directory, *format).await,
+                    ImageCommands::Add { name, from } => return images::add(&directory, name, from).await,
+                    ImageCommands::Prepare { .. } => {}
+                }
+            }
+            mode::Selection::Cloud { .. } => anyhow::ensure!(matches!(command, ImageCommands::List { .. }),
+                "start the standalone server with `magic server start` before registering or preparing images"),
         }
-        anyhow::ensure!(
-            cli.local || matches!(command, ImageCommands::List { .. }),
-            "image registration and preparation use --local"
-        );
     }
     if let Commands::Provider { command } = &command {
         match command {
@@ -815,7 +813,7 @@ async fn run(mut cli: Cli) -> Result<()> {
                 return provider_registry::uninstall(name).await
             }
             ProviderCommands::List { format } => return provider_registry::list(*format),
-            ProviderCommands::Configure { .. } => {}
+            ProviderCommands::Configure { .. } | ProviderCommands::Verify { .. } => {}
         }
     }
     cli.command = Some(command);
@@ -836,7 +834,7 @@ async fn run(mut cli: Cli) -> Result<()> {
     ) {
         anyhow::ensure!(
             local,
-            "select the local server with --local to configure an installed provider"
+            "start the standalone server with `magic server start` before configuring a provider"
         );
     }
     let mut api = Api::new(&server_url)?;
@@ -865,11 +863,28 @@ async fn run(mut cli: Cli) -> Result<()> {
             command: ImageCommands::Prepare { name, provider },
         } => return images::prepare(&api, &name, &provider).await,
         Commands::Provider {
+            command: ProviderCommands::Verify { name },
+        } => {
+            anyhow::ensure!(
+                local,
+                "start the standalone server with `magic server start` before verifying a provider"
+            );
+            anyhow::ensure!(
+                provider_registry::valid_name(&name),
+                "invalid provider name"
+            );
+            api.request(Method::POST, &format!("v1/providers/{name}/verify"), None)
+                .await?;
+            println!("Provider {name} verified.");
+            return Ok(());
+        }
+        Commands::Provider {
             command:
                 ProviderCommands::Configure {
                     name,
                     secret_string,
                     secret_file,
+                    options,
                 },
         } => {
             return provider_registry::configure(
@@ -877,6 +892,7 @@ async fn run(mut cli: Cli) -> Result<()> {
                 &name,
                 secret_string,
                 secret_file.as_deref(),
+                &options,
             )
             .await;
         }

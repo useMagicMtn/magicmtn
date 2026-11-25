@@ -141,6 +141,55 @@ where
     }
 }
 
+/// Serve the shared setup contract alongside a credentialed workload dispatcher.
+/// Discovery never calls the initializer. Only explicit configuration provisions
+/// resources; verification startup calls the read-only `ProviderSetup::verify`.
+pub async fn run_credentialed_with_setup<B, D, F>(
+    provider: &str,
+    version: &str,
+    mut capabilities: Capabilities,
+    credential: CredentialSpec,
+    setup: magicmtn_sdk::provider_setup::SetupSpec,
+    initialize: impl FnOnce(CredentialValues) -> F,
+) -> Result<()>
+where
+    B: magicmtn_sdk::provider_setup::ProviderSetup + Send + Sync + 'static,
+    D: FnMut(Operation) -> BoxFuture<'static, Value>,
+    F: std::future::Future<Output = Result<(std::sync::Arc<B>, D)>>,
+{
+    setup.validate_options(&Default::default())?;
+    capabilities.setup = Some(setup);
+    run_credentialed(
+        provider,
+        version,
+        capabilities,
+        credential,
+        |values, verify| async move {
+            let (backend, mut dispatch) = initialize(values).await?;
+            let account = if verify {
+                Some(backend.verify().await?)
+            } else {
+                None
+            };
+            let dispatch = move |operation| -> BoxFuture<'static, Value> {
+                if let Operation::ProviderConfigure { options } = operation {
+                    let backend = backend.clone();
+                    Box::pin(async move {
+                        backend
+                            .configure(&options)
+                            .await
+                            .map(Value::ConfiguredConnection)
+                    })
+                } else {
+                    dispatch(operation)
+                }
+            };
+            Ok((account, dispatch))
+        },
+    )
+    .await
+}
+
 fn ensure_startup(startup: &ProviderStartupInput, provider: &str) -> Result<()> {
     anyhow::ensure!(
         startup.protocol_version == CREDENTIAL_PROTOCOL_VERSION

@@ -1314,6 +1314,7 @@ mod tests {
         let release = magicmtn_provider_framework::host::Release {
             installed: Installed {
                 package: magicmtn_provider_framework::host::Package {
+                    runtime: None,
                     name: "fireworks".into(),
                     version: "0.1.0".into(),
                     protocol_version: 1,

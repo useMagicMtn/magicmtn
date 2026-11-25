@@ -184,3 +184,151 @@ fn failed_start_does_not_select_local_mode() {
         .join(".config/magicmtn/cli/selection.json")
         .exists());
 }
+
+#[cfg(unix)]
+#[test]
+fn standalone_provider_workflow_uses_the_selected_deployment_without_local_flags() {
+    use magicmtn_sdk::{
+        image_registry,
+        plugin::{Capabilities, CredentialSpec, ProviderManifest, SandboxOperation},
+        provider_setup::SetupSpec,
+    };
+    use serde_json::json;
+    use sha2::{Digest, Sha256};
+
+    let home = tempfile::tempdir().unwrap();
+    let calls = home.path().join("provider-calls");
+    let mut capabilities = Capabilities::sandbox(vec![
+        SandboxOperation::PrepareImage,
+        SandboxOperation::Create,
+        SandboxOperation::Status,
+        SandboxOperation::ExecBounded,
+        SandboxOperation::Terminate,
+    ]);
+    capabilities.setup = Some(SetupSpec {
+        options: Default::default(),
+    });
+    let manifest = ProviderManifest {
+        manifest_version: 1,
+        provider_version: "1.0.0".into(),
+        credential: Some(CredentialSpec {
+            fields: vec!["TOKEN".into()],
+        }),
+        capabilities,
+    };
+    let image = image_registry::canonical("linux/amd64").unwrap();
+    let script = r#"#!/bin/sh
+reply() { printf '{"id":%s,"protocol_version":2,"provider":"fixture","outcome":{"ok":%s}}\n' "$1" "$2"; }
+IFS= read -r frame || exit 1
+case "$frame" in
+ *'"verify_account":true'*) reply 1 '{"kind":"verified_account","value":"account-fixture"}'; exit ;;
+esac
+reply 1 '__MANIFEST__'
+id=1
+while IFS= read -r frame; do
+ id=$((id+1))
+ case "$frame" in
+  *provider_configure*) reply "$id" '{"kind":"configured_connection","value":{"account":"account-fixture","configuration":{"MAGICMTN_FIXTURE_APP_ID":"app-fixture"}}}' ;;
+  *sandbox_prepare_image*) printf 'prepare\n' >> '__CALLS__'; reply "$id" '__PREPARED__' ;;
+  *sandbox_create*) reply "$id" '{"kind":"sandbox","value":{"provider_id":"fixture-sandbox","status":"running","create_time_ms":null,"metadata":null}}' ;;
+  *sandbox_status*) reply "$id" '{"kind":"sandbox_status","value":"running"}' ;;
+  *sandbox_exec_bounded*) reply "$id" '{"kind":"exec","value":{"stdout":"hello","stderr":"","exit_code":0,"elapsed_ms":1,"timed_out":false,"truncated":false}}' ;;
+  *sandbox_terminate*) reply "$id" '{"kind":"done"}' ;;
+  *shutdown*) reply "$id" '{"kind":"done"}'; exit ;;
+  *) exit 1 ;;
+ esac
+done
+"#.replace("__MANIFEST__", &json!({"kind":"description","value":manifest}).to_string())
+        .replace("__PREPARED__", &json!({"kind":"prepared_image","value":{"image":image,"platform":"linux/amd64","artifact":"fixture-image","configuration":{}}}).to_string())
+        .replace("__CALLS__", &calls.to_string_lossy().replace('\'', "'\\''"));
+    let package = json!({"name":"fixture","version":"1.0.0","protocol_version":2,
+        "os":std::env::consts::OS,"arch":std::env::consts::ARCH,"sha256":format!("{:x}",Sha256::digest(script.as_bytes()))});
+    let encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+    let mut archive = tar::Builder::new(encoder);
+    for (name, data) in [
+        ("package.json", package.to_string().into_bytes()),
+        ("provider", script.into_bytes()),
+        ("LICENSE", b"fixture".to_vec()),
+    ] {
+        let mut header = tar::Header::new_gnu();
+        header.set_size(data.len() as u64);
+        header.set_mode(0o755);
+        header.set_cksum();
+        archive
+            .append_data(&mut header, name, data.as_slice())
+            .unwrap();
+    }
+    let path = home.path().join("provider.tar.gz");
+    fs::write(&path, archive.into_inner().unwrap().finish().unwrap()).unwrap();
+    let run = |args: &[&str]| {
+        assert!(!args.contains(&"--local"));
+        let output = magic(home.path())
+            .args(args)
+            .env("MAGICMTN_SERVER_URL", "http://127.0.0.1:1")
+            .env("PI_CODING_AGENT_DIR", home.path().join("pi"))
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap()
+    };
+    run(&["provider", "install", "--file", path.to_str().unwrap()]);
+    let mut server = Server(
+        magic(home.path())
+            .args(["server", "start", "--bind", "127.0.0.1:0"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
+    let connection = home.path().join(".config/magicmtn/local/connection.json");
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !connection.exists() {
+        assert!(
+            server.0.try_wait().unwrap().is_none(),
+            "server exited during startup"
+        );
+        assert!(Instant::now() < deadline, "server startup timed out");
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    let credentials = home.path().join("credentials.json");
+    fs::write(&credentials, r#"{"TOKEN":"fixture"}"#).unwrap();
+    run(&[
+        "provider",
+        "configure",
+        "fixture",
+        "--secret-file",
+        credentials.to_str().unwrap(),
+    ]);
+    run(&["provider", "verify", "fixture"]);
+    assert!(run(&["images", "list"]).contains("canonical"));
+    for _ in 0..2 {
+        run(&["images", "prepare", "canonical", "--provider", "fixture"]);
+    }
+    assert_eq!(
+        fs::read_to_string(calls).unwrap(),
+        "prepare\n",
+        "prepared images should be reused"
+    );
+    let id = run(&[
+        "computer",
+        "new",
+        "--image",
+        "canonical",
+        "--provider",
+        "fixture",
+    ]);
+    let id = id.trim();
+    assert!(run(&["computer", "exec", id, "--", "/bin/echo", "hello"]).contains("hello"));
+    run(&["computer", "terminate", id, "--yes"]);
+    run(&["agents", "install", "pi"]);
+    assert!(home
+        .path()
+        .join("pi/extensions/magicmtn/index.js")
+        .is_file());
+    run(&["server", "stop"]);
+    assert!(server.0.wait().unwrap().success());
+}

@@ -126,8 +126,10 @@ pub(crate) fn write_catalog(
 ) -> Result<()> {
     let releases: Vec<_> = registry.list()?.into_iter().map(|installed| {
         let executable = root.join(&installed.package.name).join(&installed.package.version).join("provider");
-        json!({"package":installed.package,"manifest":installed.manifest,"active":installed.active,"executable":executable})
-    }).collect();
+        let directory = executable.parent().unwrap();
+        let runtime_environment = installed.package.runtime.as_ref().map(|spec| spec.environment(directory)).transpose()?.unwrap_or_default();
+        Ok(json!({"package":installed.package,"manifest":installed.manifest,"active":installed.active,"executable":executable,"runtime_environment":runtime_environment}))
+    }).collect::<Result<Vec<_>>>()?;
     let catalog = root.join("catalog.json");
     let mut file = tempfile::NamedTempFile::new_in(root)?;
     serde_json::to_writer_pretty(&mut file, &releases)?;

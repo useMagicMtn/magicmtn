@@ -70,10 +70,18 @@ impl Database {
                 && r.package.arch == std::env::consts::ARCH
         }) {
             let name = &release.package.name;
+            let saved: Option<String> = sqlx::query_scalar("SELECT s.configuration FROM provider_setup s JOIN provider_connections c ON c.id=s.connection_id WHERE c.reference=?")
+                .bind(format!("connection:self-{name}")).fetch_optional(&self.pool).await?;
+            let saved: std::collections::BTreeMap<String, String> = saved
+                .map(|value| serde_json::from_str(&value))
+                .transpose()?
+                .unwrap_or_default();
             let mut configuration = crate::provider_connections::local_configuration(name);
             if let Some(values) = overrides.get(name) {
                 configuration.extend(values.clone());
             }
+            // Explicitly configured resource identities survive startup settings.
+            configuration.extend(saved);
             let binding = Binding {
                 connection_id: Uuid::new_v4(),
                 organization_id: self.id,

@@ -32,7 +32,7 @@ struct Artifact {
     sha256: String,
     executable_sha256: String,
 }
-fn valid_name(name: &str) -> bool {
+pub(crate) fn valid_name(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= 64
         && name.bytes().next().unwrap().is_ascii_lowercase()
@@ -149,7 +149,7 @@ pub(crate) async fn install(name: &str) -> Result<()> {
         "{ORIGIN}/providers/{name}/{}/{}.tar.gz",
         provider.version, platform
     );
-    let bytes = download(&client, &url, 64 * 1024 * 1024).await.context(
+    let bytes = download(&client, &url, 320 * 1024 * 1024).await.context(
         "downloading the current Registry release; retry installation if a release changed",
     )?;
     install_package(&bytes, Some((provider, artifact))).await
@@ -159,11 +159,11 @@ pub(crate) async fn install_file(file: &Path) -> Result<()> {
     let mut bytes = Vec::new();
     std::fs::File::open(file)
         .context("opening provider package")?
-        .take(64 * 1024 * 1024 + 1)
+        .take(320 * 1024 * 1024 + 1)
         .read_to_end(&mut bytes)
         .context("reading provider package")?;
     ensure!(
-        bytes.len() <= 64 * 1024 * 1024,
+        bytes.len() <= 320 * 1024 * 1024,
         "provider package exceeds 64 MiB"
     );
     install_package(&bytes, None).await
@@ -194,20 +194,20 @@ async fn install_at(
     }
     let registry = Registry::new(root.to_owned())?;
     let installed = registry.install(bytes).await?;
-    if let Some((provider, artifact)) = source {
-        let directory = root.join(&provider.name).join(&provider.version);
-        // Registry::install also verifies a resident binary before reenrollment.
-        let mut receipt = tempfile::NamedTempFile::new_in(&directory)?;
-        serde_json::to_writer(
-            &mut receipt,
-            &serde_json::json!({
-                "registry": ORIGIN,
-                "pin": installed.pin(),
-                "archive_sha256": artifact.sha256,
-            }),
-        )?;
-        receipt.persist(directory.join("registry-origin.json"))?;
-    }
+    let directory = root
+        .join(&installed.package.name)
+        .join(&installed.package.version);
+    // An explicit local package is also a user-authorized installation. Its
+    // receipt must not claim registry verification.
+    let (origin, archive_sha256) = source
+        .map(|(_, artifact)| (ORIGIN, artifact.sha256.clone()))
+        .unwrap_or_else(|| ("local-package", format!("{:x}", Sha256::digest(bytes))));
+    let mut receipt = tempfile::NamedTempFile::new_in(&directory)?;
+    serde_json::to_writer(
+        &mut receipt,
+        &serde_json::json!({"registry":origin,"pin":installed.pin(),"archive_sha256":archive_sha256}),
+    )?;
+    receipt.persist(directory.join("registry-origin.json"))?;
     crate::configuration::write_catalog(&registry, root)?;
     Ok(installed)
 }
@@ -217,6 +217,7 @@ pub(crate) async fn configure(
     name: &str,
     secret_string: Option<String>,
     secret_file: Option<&Path>,
+    options: &[String],
 ) -> Result<()> {
     const MAX_BUNDLE_BYTES: u64 = 65_536;
     let root = crate::configuration::directory()?.join("providers");
@@ -242,7 +243,26 @@ pub(crate) async fn configure(
         bytes.len() as u64 <= MAX_BUNDLE_BYTES,
         "provider credential exceeds the size limit"
     );
-    let url = api.base.join(&format!("v1/providers/{name}/credential"))?;
+    let credential: magicmtn_sdk::plugin::CredentialValues = serde_json::from_slice(&bytes)
+        .map_err(|_| anyhow::anyhow!("invalid provider credential JSON"))?;
+    let mut settings = BTreeMap::new();
+    for option in options {
+        let (key, value) = option
+            .split_once('=')
+            .context("provider option must be KEY=VALUE")?;
+        ensure!(
+            settings.insert(key.to_owned(), value.to_owned()).is_none(),
+            "duplicate provider option"
+        );
+    }
+    if let Some(spec) = &installed.manifest.capabilities.setup {
+        spec.validate_options(&settings)?;
+    } else {
+        ensure!(settings.is_empty(), "provider has no setup options");
+    }
+    let bytes =
+        serde_json::to_vec(&serde_json::json!({"credential":credential,"options":settings}))?;
+    let url = api.base.join(&format!("v1/providers/{name}/configure"))?;
     let response = api
         .authenticated(api.client.put(url))
         .header(reqwest::header::CONTENT_TYPE, "application/json")
@@ -347,7 +367,7 @@ mod tests {
     }
     #[cfg(unix)]
     #[tokio::test]
-    async fn installation_records_origin_only_for_a_verified_registry_release() {
+    async fn installation_records_local_and_verified_registry_origins_separately() {
         use magicmtn_sdk::plugin::{Capabilities, ProviderManifest};
         use serde_json::json;
 
@@ -369,6 +389,7 @@ mod tests {
              IFS= read -r frame\n"
         );
         let package = Package {
+            runtime: None,
             name: "example".into(),
             version: "1.0.0".into(),
             protocol_version: 1,
@@ -407,15 +428,23 @@ mod tests {
         let receipt = release.join("registry-origin.json");
 
         install_at(root, &bytes, None).await.unwrap();
-        assert!(!receipt.exists());
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&std::fs::read(&receipt).unwrap()).unwrap()
+                ["registry"],
+            "local-package"
+        );
         let registry = Registry::new(root.to_owned()).unwrap();
-        assert!(registry.registry_release("example").is_err());
+        assert!(registry.registry_release("example").is_ok());
         let path = release.join("provider");
         std::fs::write(&path, b"changed").unwrap();
         assert!(install_at(root, &bytes, Some((&provider, &artifact)))
             .await
             .is_err());
-        assert!(!receipt.exists());
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&std::fs::read(&receipt).unwrap()).unwrap()
+                ["registry"],
+            "local-package"
+        );
         std::fs::write(&path, executable).unwrap();
         let installed = install_at(root, &bytes, Some((&provider, &artifact)))
             .await
@@ -451,6 +480,7 @@ mod tests {
             let path = root.join(name).join(version);
             std::fs::create_dir_all(&path).unwrap();
             let package = Package {
+                runtime: None,
                 name: name.into(),
                 version: version.into(),
                 protocol_version: 1,

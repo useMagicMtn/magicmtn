@@ -37,6 +37,9 @@ pub enum InferenceDeploymentOperation {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Capabilities {
+    /// Account configuration, separate from workload operations.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub setup: Option<crate::provider_setup::SetupSpec>,
     /// Advertises web search through `SearchEngineBackend`.
     #[serde(default, skip_serializing_if = "is_false")]
     pub search: bool,
@@ -53,6 +56,7 @@ pub struct Capabilities {
 impl Capabilities {
     pub fn sandbox(operations: Vec<SandboxOperation>) -> Self {
         Self {
+            setup: None,
             search: false,
             inference_tasks: vec![],
             inference_deployment_operations: vec![],
@@ -65,6 +69,7 @@ impl Capabilities {
     }
     pub fn inference(tasks: Vec<String>) -> Self {
         Self {
+            setup: None,
             search: false,
             inference_tasks: tasks,
             inference_deployment_operations: vec![],
@@ -90,6 +95,7 @@ impl Capabilities {
     }
     pub fn supports(&self, operation: &Operation) -> bool {
         match operation {
+            Operation::ProviderConfigure { .. } => self.setup.is_some(),
             Operation::SandboxPrepareImage { .. } => self
                 .sandbox_operations
                 .contains(&SandboxOperation::PrepareImage),
@@ -192,9 +198,37 @@ impl CredentialSpec {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize)]
 #[serde(transparent)]
 pub struct CredentialValues(pub std::collections::BTreeMap<String, String>);
+
+impl<'de> Deserialize<'de> for CredentialValues {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct UniqueFields;
+        impl<'de> serde::de::Visitor<'de> for UniqueFields {
+            type Value = CredentialValues;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a credential object with unique string fields")
+            }
+            fn visit_map<M: serde::de::MapAccess<'de>>(
+                self,
+                mut map: M,
+            ) -> Result<Self::Value, M::Error> {
+                let mut values = CredentialValues(Default::default());
+                while let Some((key, value)) = map.next_entry::<String, String>()? {
+                    if values.0.contains_key(&key) {
+                        return Err(serde::de::Error::custom(
+                            "duplicate provider credential field",
+                        ));
+                    }
+                    values.0.insert(key, value);
+                }
+                Ok(values)
+            }
+        }
+        deserializer.deserialize_map(UniqueFields)
+    }
+}
 
 impl Drop for CredentialValues {
     fn drop(&mut self) {
@@ -243,6 +277,9 @@ pub struct Request {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "name", content = "arguments", rename_all = "snake_case")]
 pub enum Operation {
+    ProviderConfigure {
+        options: std::collections::BTreeMap<String, String>,
+    },
     Describe,
     Shutdown,
     SandboxPrepareImage {
@@ -308,6 +345,7 @@ impl Operation {
         match self {
             Self::SandboxPrepareImage { .. } => "sandbox_prepare_image",
             Self::Search { .. } => "search",
+            Self::ProviderConfigure { .. } => "provider_configure",
             Self::Describe => "describe",
             Self::Shutdown => "shutdown",
             Self::SandboxCreate { .. } => "sandbox_create",
@@ -412,6 +450,7 @@ pub enum Outcome {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "value", rename_all = "snake_case")]
 pub enum Value {
+    ConfiguredConnection(crate::provider_setup::ConfiguredConnection),
     PreparedImage(crate::image_registry::PreparedImage),
     Description(ProviderManifest),
     VerifiedAccount(String),

@@ -3,7 +3,7 @@ use axum::{
     body::Bytes,
     extract::{DefaultBodyLimit, Path as RoutePath, State},
     http::StatusCode,
-    routing::put,
+    routing::{post, put},
     Json, Router,
 };
 use magicmtn_engine::{
@@ -107,6 +107,8 @@ impl LocalCredentials {
     pub(crate) fn router(self) -> Router {
         Router::new()
             .route("/v1/providers/:name/credential", put(configure))
+            .route("/v1/providers/:name/configure", put(setup))
+            .route("/v1/providers/:name/verify", post(verify))
             .layer(DefaultBodyLimit::max(MAX_BUNDLE_BYTES))
             .with_state(self)
     }
@@ -125,7 +127,12 @@ impl LocalCredentials {
         Ok(binding)
     }
 
-    async fn save(&self, binding: Binding, body: &[u8]) -> Result<()> {
+    async fn save(
+        &self,
+        mut binding: Binding,
+        body: &[u8],
+        options: Option<&std::collections::BTreeMap<String, String>>,
+    ) -> Result<()> {
         let values = parse_bundle(body)?;
         binding
             .manifest
@@ -135,16 +142,34 @@ impl LocalCredentials {
             .check_values(&values)?;
         let key = reference(&binding)?;
         let update = self.registry.begin_credential_update(key)?;
-        let account = self
-            .registry
-            .verify_credential(
-                &binding.pin,
-                &ProcessEnvironment {
-                    values: binding.configuration.clone(),
-                },
-                &values,
-            )
-            .await?;
+        let environment = ProcessEnvironment {
+            values: binding.configuration.clone(),
+        };
+        let mut setup_configuration = None;
+        let account = if let Some(options) = options {
+            let connection = self
+                .registry
+                .configure_credential(&binding.pin, &environment, &values, options)
+                .await?;
+            setup_configuration = Some(connection.configuration.clone());
+            binding.configuration.extend(connection.configuration);
+            connection.account
+        } else {
+            self.registry
+                .verify_credential(&binding.pin, &environment, &values)
+                .await?
+        };
+        let previous_account: Option<String> =
+            sqlx::query_scalar("SELECT account FROM provider_credentials WHERE connection_id=?")
+                .bind(binding.connection_id.to_string())
+                .fetch_optional(&self.database.pool)
+                .await?;
+        ensure!(
+            previous_account
+                .as_ref()
+                .is_none_or(|previous| previous == &account),
+            "provider account differs from the connection"
+        );
         let random = SystemRandom::new();
         let mut nonce = [0; 12];
         random
@@ -152,7 +177,7 @@ impl LocalCredentials {
             .map_err(|_| anyhow::anyhow!("cannot generate credential nonce"))?;
         let mut row = Stored {
             connection_id: binding.connection_id.to_string(),
-            provider: binding.pin.name,
+            provider: binding.pin.name.clone(),
             account,
             version: Uuid::new_v4().to_string(),
             nonce: nonce.to_vec(),
@@ -167,14 +192,26 @@ impl LocalCredentials {
                 &mut *ciphertext,
             )
             .map_err(|_| anyhow::anyhow!("cannot encrypt provider credential"))?;
+        let mut transaction = self.database.pool.begin().await?;
         let changed = sqlx::query(
             "INSERT INTO provider_credentials(connection_id,provider,account,version,nonce,ciphertext)
              VALUES(?,?,?,?,?,?) ON CONFLICT(connection_id) DO UPDATE SET
              version=excluded.version, nonce=excluded.nonce, ciphertext=excluded.ciphertext
              WHERE account=excluded.account AND provider=excluded.provider"
         ).bind(&row.connection_id).bind(&row.provider).bind(&row.account).bind(&row.version)
-            .bind(&row.nonce).bind(ciphertext.as_slice()).execute(&self.database.pool).await?.rows_affected();
+            .bind(&row.nonce).bind(ciphertext.as_slice()).execute(&mut *transaction).await?.rows_affected();
         ensure!(changed == 1, "provider account differs from the connection");
+        if let Some(setup_configuration) = setup_configuration {
+            sqlx::query("INSERT INTO provider_setup(connection_id,configuration) VALUES(?,?) ON CONFLICT(connection_id) DO UPDATE SET configuration=excluded.configuration")
+                .bind(&row.connection_id).bind(serde_json::to_string(&setup_configuration)?)
+                .execute(&mut *transaction).await?;
+            // Advance only when setup changes the binding; repeated configuration
+            // keeps prepared images reusable. Frozen sandbox bindings stay intact.
+            sqlx::query("UPDATE provider_connections SET binding=json_set(?, '$.generation', json_extract(binding,'$.generation')+1) WHERE id=? AND json_extract(binding,'$.configuration')<>json_extract(?,'$.configuration')")
+                .bind(serde_json::to_string(&binding)?).bind(&row.connection_id).bind(serde_json::to_string(&binding)?)
+                .execute(&mut *transaction).await?;
+        }
+        transaction.commit().await?;
         self.registry.publish_credential(
             update,
             PreparedCredential {
@@ -198,7 +235,7 @@ async fn configure(
             .binding(&name)
             .await
             .map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))?;
-        service.save(binding, &body).await.map_err(|error| {
+        service.save(binding, &body, None).await.map_err(|error| {
             // The verification call suppresses vendor diagnostics. Keep storage and
             // transport errors private as well.
             let message = error.to_string();
@@ -221,6 +258,95 @@ async fn configure(
     })
     .await;
     result.map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "provider configuration failed".into(),
+        )
+    })?
+}
+
+async fn verify(
+    State(service): State<LocalCredentials>,
+    RoutePath(name): RoutePath<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let binding = service.binding(&name).await.map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            "provider connection unavailable".into(),
+        )
+    })?;
+    let key = reference(&binding).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            "provider connection unavailable".into(),
+        )
+    })?;
+    service
+        .registry
+        .verify_connection(
+            &key,
+            &binding.pin,
+            &ProcessEnvironment {
+                values: binding.configuration,
+            },
+        )
+        .await
+        .map_err(|_| {
+            (
+                StatusCode::BAD_REQUEST,
+                "provider connection verification failed".into(),
+            )
+        })?;
+    Ok(Json(json!({"provider":name,"status":"ready"})))
+}
+
+/// Explicit setup accepts nonsecret provider options beside the credential bundle.
+async fn setup(
+    State(service): State<LocalCredentials>,
+    RoutePath(name): RoutePath<String>,
+    body: Bytes,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Input {
+        credential: magicmtn_sdk::plugin::CredentialValues,
+        #[serde(default)]
+        options: std::collections::BTreeMap<String, String>,
+    }
+    let input: Input = serde_json::from_slice(&body).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            "invalid provider configuration".into(),
+        )
+    })?;
+    let credential =
+        zeroize::Zeroizing::new(serde_json::to_vec(&input.credential).map_err(|_| {
+            (
+                StatusCode::BAD_REQUEST,
+                "invalid provider credential".into(),
+            )
+        })?);
+    tokio::spawn(async move {
+        let _write = service.writes.lock().await;
+        let binding = service.binding(&name).await.map_err(|_| {
+            (
+                StatusCode::BAD_REQUEST,
+                "provider connection unavailable".into(),
+            )
+        })?;
+        service
+            .save(binding, &credential, Some(&input.options))
+            .await
+            .map_err(|_| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    "provider setup failed; check credentials and setup options".into(),
+                )
+            })?;
+        Ok(Json(json!({"provider":name,"status":"ready"})))
+    })
+    .await
+    .map_err(|_| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             "provider configuration failed".into(),
@@ -291,11 +417,17 @@ mod tests {
             credential: Some(CredentialSpec {
                 fields: vec!["TOKEN".into()],
             }),
-            capabilities: Capabilities::sandbox(vec![
-                SandboxOperation::Create,
-                SandboxOperation::ExecBounded,
-                SandboxOperation::Terminate,
-            ]),
+            capabilities: {
+                let mut capabilities = Capabilities::sandbox(vec![
+                    SandboxOperation::Create,
+                    SandboxOperation::ExecBounded,
+                    SandboxOperation::Terminate,
+                ]);
+                capabilities.setup = Some(magicmtn_sdk::provider_setup::SetupSpec {
+                    options: Default::default(),
+                });
+                capabilities
+            },
         };
         let script = r#"#!/bin/sh
 test -z "${TOKEN+x}" || exit 1
@@ -317,12 +449,13 @@ id=1
 while IFS= read -r frame; do
     id=$((id+1))
     case "$frame" in
+      *'"name":"provider_configure"'*) printf 'setup\n' >> '__SETUP_LOG__'; reply "$id" '{"kind":"configured_connection","value":{"account":"'"$account"'","configuration":{"MAGICMTN_FIXTURE_APP_ID":"app-a"}}}' ;;
       *'"name":"sandbox_create"'*) reply "$id" '{"kind":"sandbox","value":{"provider_id":"account-a-sandbox","status":"running","create_time_ms":null,"metadata":null}}' ;;
       *'"name":"sandbox_exec_bounded"'*) reply "$id" '{"kind":"exec","value":{"stdout":"'"$version"'","stderr":"","exit_code":0,"elapsed_ms":0,"timed_out":false,"truncated":false}}' ;;
       *) exit 1 ;;
     esac
 done
-"#.replace("__MANIFEST__", &json!({"kind":"description", "value":manifest}).to_string());
+"#.replace("__MANIFEST__", &json!({"kind":"description", "value":manifest}).to_string()).replace("__SETUP_LOG__", root.join("setup-calls").to_str().unwrap());
         let digest = hex::encode(digest(&SHA256, script.as_bytes()));
         let package = json!({"name":"fixture","version":"1.0.0","protocol_version":2,
             "os":std::env::consts::OS,"arch":std::env::consts::ARCH,"sha256":digest});
@@ -402,8 +535,74 @@ done
             StatusCode::UNAUTHORIZED
         );
         assert_eq!(
-            request(&app, "PUT", configure, first, true).await.0,
+            request(
+                &app,
+                "PUT",
+                "/v1/providers/fixture/configure",
+                json!({"credential":first,"options":{}}),
+                true
+            )
+            .await
+            .0,
             StatusCode::OK
+        );
+        assert_eq!(
+            request(
+                &app,
+                "POST",
+                "/v1/providers/fixture/verify",
+                json!({}),
+                false
+            )
+            .await
+            .0,
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            request(
+                &app,
+                "POST",
+                "/v1/providers/fixture/verify",
+                json!({}),
+                true
+            )
+            .await
+            .0,
+            StatusCode::OK
+        );
+        let configured = database.binding(None, None, "fixture").await.unwrap();
+        assert_eq!(configured.configuration["MAGICMTN_FIXTURE_APP_ID"], "app-a");
+        assert_eq!(
+            request(
+                &app,
+                "PUT",
+                "/v1/providers/fixture/configure",
+                json!({"credential":{"TOKEN":"account-a-v1"},"options":{}}),
+                true
+            )
+            .await
+            .0,
+            StatusCode::OK
+        );
+        assert_eq!(
+            database
+                .binding(None, None, "fixture")
+                .await
+                .unwrap()
+                .generation,
+            configured.generation
+        );
+        assert_eq!(
+            request(
+                &app,
+                "PUT",
+                "/v1/providers/fixture/configure",
+                json!({"credential":{"TOKEN":"account-a-v1"},"options":{"unknown":"value"}}),
+                true
+            )
+            .await
+            .0,
+            StatusCode::BAD_REQUEST
         );
         let (status, sandbox) = request(&app, "POST", "/v1/sandboxes", create.clone(), true).await;
         assert_eq!(status, StatusCode::OK);
@@ -511,6 +710,29 @@ done
             .windows(b"account-a-v2".len())
             .any(|part| part == b"account-a-v2"));
         let replacement = Registry::new(providers).unwrap();
+        database
+            .bootstrap_with_configuration(
+                &replacement,
+                &[(
+                    "fixture".into(),
+                    [("MAGICMTN_FIXTURE_APP_ID".into(), "replacement-app".into())].into(),
+                )]
+                .into(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            database
+                .binding(None, None, "fixture")
+                .await
+                .unwrap()
+                .configuration["MAGICMTN_FIXTURE_APP_ID"],
+            "app-a"
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join("setup-calls")).unwrap(),
+            "setup\nsetup\n"
+        );
         let credentials = LocalCredentials::open(database.clone(), replacement.clone(), root)
             .await
             .unwrap();

@@ -188,7 +188,7 @@ impl Registry {
                 .all(|field| !environment.values.contains_key(field)),
             "provider credential conflicts with configuration"
         );
-        let configured = self.configured_environment(pin, Some(environment));
+        let configured = self.configured_environment(pin, Some(environment))?;
         let (mut connection, _scratch) = Client::spawn(
             &executable,
             CREDENTIAL_PROTOCOL_VERSION,
@@ -207,6 +207,106 @@ impl Registry {
             }
             _ => anyhow::bail!("provider credential verification failed"),
         }
+    }
+
+    /// Explicit setup may provision resources; normal startup never calls it.
+    pub async fn configure_credential(
+        &self,
+        pin: &Pin,
+        environment: &ProcessEnvironment,
+        values: &CredentialValues,
+        options: &std::collections::BTreeMap<String, String>,
+    ) -> Result<magicmtn_sdk::provider_setup::ConfiguredConnection> {
+        use magicmtn_sdk::{plugin::Operation, provider_setup::ConfiguredConnection};
+        let (installed, executable) = self.executable(pin)?;
+        let Some(setup) = &installed.manifest.capabilities.setup else {
+            ensure!(options.is_empty(), "provider has no setup options");
+            return Ok(ConfiguredConnection {
+                account: self.verify_credential(pin, environment, values).await?,
+                configuration: Default::default(),
+            });
+        };
+        setup.validate_options(options)?;
+        let spec = installed
+            .manifest
+            .credential
+            .as_ref()
+            .context("provider has no credentials")?;
+        spec.check_values(values)?;
+        ensure!(
+            spec.fields
+                .iter()
+                .all(|field| !environment.values.contains_key(field)),
+            "provider credential conflicts with configuration"
+        );
+        let configured = self.configured_environment(pin, Some(environment))?;
+        let client = Client::start_with_credential(
+            &executable,
+            &pin.name,
+            installed.package.protocol_version,
+            Some(configured.as_ref().unwrap_or(environment)),
+            Some(values),
+        )
+        .await?;
+        ensure!(
+            client.manifest == installed.manifest,
+            "provider manifest changed"
+        );
+        let result = client
+            .call(
+                Operation::ProviderConfigure {
+                    options: options.clone(),
+                },
+                Duration::from_secs(60),
+            )
+            .await;
+        client.shutdown().await;
+        match result {
+            Ok(Value::ConfiguredConnection(connection)) => {
+                connection.validate()?;
+                let prefix = format!("MAGICMTN_{}_", pin.name.to_uppercase().replace('-', "_"));
+                ensure!(
+                    connection
+                        .configuration
+                        .keys()
+                        .all(|key| key.starts_with(&prefix)
+                            && !key.ends_with("_PYTHON")
+                            && !key.ends_with("_KUBECTL")
+                            && !installed
+                                .package
+                                .runtime
+                                .as_ref()
+                                .is_some_and(|runtime| runtime.environment.contains_key(key))),
+                    "provider returned a setting outside its connection scope"
+                );
+                ensure!(
+                    spec.fields
+                        .iter()
+                        .all(|field| !connection.configuration.contains_key(field)),
+                    "provider returned credential fields in configuration"
+                );
+                Ok(connection)
+            }
+            _ => anyhow::bail!("provider setup failed"),
+        }
+    }
+
+    /// Explicit read-only check of the currently prepared connection.
+    pub async fn verify_connection(
+        &self,
+        key: &CredentialRef,
+        pin: &Pin,
+        environment: &ProcessEnvironment,
+    ) -> Result<()> {
+        let admission = self.admit_credential(key, pin)?;
+        let account = self
+            .verify_credential(pin, environment, &admission.active.credential.values)
+            .await?;
+        ensure!(
+            account == admission.active.credential.account,
+            "provider account differs from the connection"
+        );
+        Ok(())
     }
 
     pub fn admit_credential(&self, key: &CredentialRef, pin: &Pin) -> Result<CredentialAdmission> {
@@ -279,7 +379,7 @@ impl Registry {
         let environment = ProcessEnvironment {
             values: configuration.clone(),
         };
-        let configured = self.configured_environment(pin, Some(&environment));
+        let configured = self.configured_environment(pin, Some(&environment))?;
         let started = Arc::new(
             Client::start_with_credential(
                 &executable,
