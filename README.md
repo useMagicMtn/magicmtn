@@ -63,7 +63,7 @@ To run sandboxes in your own Modal account, install the provider from the MagicM
 magic provider install modal
 ```
 
-Install the Modal SDK for the `python3` used by the server's provider processes and create a Modal app named `magicmtn`. [Python setup](https://github.com/useMagicMtn/provider-modal/blob/main/USAGE.md#install-the-modal-sdk)
+Installation includes the provider's private Python runtime and Modal SDK. Configuring the provider creates or selects the `magicmtn` app in your Modal account.
 
 When switching from MagicMtn Cloud, run `magic logout`. Start the local server in its own terminal.
 
@@ -83,9 +83,9 @@ Create an API token in your Modal workspace and save it in a private file named 
 In another terminal, verify and store the token, prepare the bundled Canonical image on Modal, and start Pi.
 
 ```sh
-magic --local provider configure modal --secret-file ./modal-credentials.json
-magic --local images list
-magic --local images prepare canonical --provider modal
+magic provider configure modal --secret-file ./modal-credentials.json
+magic images list
+magic images prepare canonical --provider modal
 magic agents install pi
 pi
 ```
@@ -95,8 +95,8 @@ In Pi, use `/login` to connect your inference provider and `/model` to choose a 
 To use your own image, register and prepare it without editing Canonical:
 
 ```sh
-magic --local images add my-dev --from ghcr.io/my-org/dev:1.0
-magic --local images prepare my-dev --provider modal
+magic images add my-dev --from ghcr.io/my-org/dev:1.0
+magic images prepare my-dev --provider modal
 ```
 
 The image must include the sandbox runtime and Pi; see [custom images](docs/local-server.md#add-a-custom-image). Preparation validates the image and saves its Modal image ID locally, so users do not maintain image mappings.

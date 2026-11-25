@@ -33,35 +33,35 @@ Starting the server selects local mode for the CLI and Pi extension. Commands us
 In another terminal, list the local image catalog and prepare the bundled Canonical image for Apple Container:
 
 ```sh
-magic --local images list
-magic --local images prepare canonical --provider apple-container
+magic images list
+magic images prepare canonical --provider apple-container
 ```
 
 Preparation downloads the immutable image for your machine and checks the sandbox runtime, Pi, user, and workspace. The prepared artifact is saved in the local deployment and reused. Create a Canonical sandbox, run a command, and clean up.
 
 ```sh
-sandbox_id=$(magic --local computer new --image canonical)
-magic --local computer exec "$sandbox_id" -- /bin/echo "hello from the sandbox"
-magic --local computer terminate "$sandbox_id" --yes
+sandbox_id=$(magic computer new --image canonical)
+magic computer exec "$sandbox_id" -- /bin/echo "hello from the sandbox"
+magic computer terminate "$sandbox_id" --yes
 ```
 
-To use the bundled Canonical image, run `magic --local computer new`. Use `magic --local images list` to list available images and `magic --local computer list` to list running sandboxes. To inspect a specific sandbox, run `magic --local computer show SANDBOX_ID --format json`.
+To use the bundled Canonical image, run `magic computer new`. Use `magic images list` to list available images and `magic computer list` to list running sandboxes. To inspect a specific sandbox, run `magic computer show SANDBOX_ID --format json`.
 
 ## Add a custom image
 
 Register an existing image without changing Canonical:
 
 ```sh
-magic --local images add my-dev --from ghcr.io/my-org/dev:1.0
-magic --local images prepare my-dev --provider apple-container
-magic --local computer new --image my-dev
+magic images add my-dev --from ghcr.io/my-org/dev:1.0
+magic images prepare my-dev --provider apple-container
+magic computer new --image my-dev
 ```
 
 Registration resolves the tag to immutable platform digests. Reusing a name with different contents is rejected; choose a new name for another image version. The image must be readable from its registry and contain Python, Pi, the executable MagicMtn sandbox runtime at `/usr/local/bin/magicmtn-sandbox-agent`, and a writable `/workspace` for the `sandbox` user with UID and GID 10001. Preparation validates these requirements without modifying your image. Images can be built independently using the [sandbox runtime installer](../runtime/install.sh).
 
-For a configured Modal provider, use `--provider modal` with the same `images prepare` command, then `magic --local computer new --image my-dev --provider modal`. Modal selects the image's AMD64 manifest and saves its imported image ID locally. Provider mappings and credentials stay with your local deployment.
+For a configured Modal provider, use `--provider modal` with the same `images prepare` command, then `magic computer new --image my-dev --provider modal`. Modal selects the image's AMD64 manifest and saves its imported image ID locally. Provider mappings and credentials stay with your local deployment.
 
-`magic --local images list` shows registered images and preparation status per provider, rather than the container runtime's entire image inventory. Listing and registering images work without starting the server; preparation uses the running server and its configured provider connection. Use `--format json` for the catalog as JSON.
+`magic images list` shows registered images and preparation status per provider, rather than the container runtime's entire image inventory. Listing and registering images work without starting the server; preparation uses the running server and its configured provider connection. Use `--format json` for the catalog as JSON.
 
 ## Use Pi with sandbox tools
 
@@ -103,13 +103,22 @@ Keep the local directory to retain your sandbox records and server credential. F
 
 ## Configure provider credentials
 
-Install the provider by its Registry name, start the local server, and pass its JSON bundle with either `--secret-file` or `--secret-string`. Replace `PROVIDER` with the exact installed Registry name.
+Install the provider by its Registry name or with `magic provider install --file PACKAGE`, start the local server, and pass its JSON bundle with either `--secret-file` or `--secret-string`. Replace `PROVIDER` with the installed provider name.
 
 ```sh
-magic --local provider configure PROVIDER --secret-file ./credentials.json
-magic --local provider configure PROVIDER --secret-string "$PROVIDER_CREDENTIAL_JSON"
+magic provider configure PROVIDER --secret-file ./credentials.json
+magic provider configure PROVIDER --secret-string "$PROVIDER_CREDENTIAL_JSON"
 ```
 
-Each provider declares its required JSON fields. The JSON file can have any filename. The file form keeps the credential out of command arguments and shell history. A successful command verifies the provider account, saves the encrypted bundle, and prepares it for use. To rotate a credential for the same account, run the command with the replacement bundle.
+Each provider declares its required JSON fields. The JSON file can have any filename. The file form keeps the credential out of command arguments and shell history. A successful command configures the provider account, saves its resource identities and encrypted credential bundle, and prepares the connection for use. To rotate a credential for the same account, run the command with the replacement bundle.
+
+Providers can declare setup options. For Modal, choose an app name with `--option app=NAME`; the default is `magicmtn`. Configuration creates the app if needed on the first connection and preserves its identity on subsequent calls.
+
+```sh
+magic provider configure modal --secret-file ./credentials.json --option app=my-workspaces
+magic provider verify modal
+```
+
+Verification checks the saved connection without creating resources. Provider packages can include a private runtime and pinned dependencies; installation checks the runtime before activating the release. [Provider setup contract](provider-setup.md)
 
 Back up `provider-credentials.key` separately from the SQLite database and restore both to recover configured credentials. The key is created in the private local data directory.
