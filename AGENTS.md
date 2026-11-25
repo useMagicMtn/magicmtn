@@ -21,7 +21,6 @@ Follow [the CLI release guide](../cloud/docs/cli-releases.md) when producing a n
 - Treat `cli/Cargo.toml` as the version source of truth. Run `python3 scripts/cli_version.py patch`, `minor`, or `major` to update it and the CLI entry in `Cargo.lock` together. Record the version with the source changes it describes.
 - Verify `magic --version` matches the intended release version on every supported platform. Run the release tests and compatibility checks required by the release guide before publishing.
 - Publish from clean, committed source with `scripts/publish-cli.py` or the CLI release workflow. Serialize publication, preserve the version and source commit in release metadata, and never overwrite published artifacts.
-- Use `magicmtn-cli-993499103295` for the installer, release artifacts, and new CLI updates. Keep only the latest five successful releases, deleting older artifacts after successful promotion through the publisher's retention logic.
-- Keep the legacy bucket only as an update bridge for existing CLIs. Refresh its copy of the current release and remove its previous artifacts; it must not accumulate a separate release history.
+- Use only `magicmtn-cli-993499103295` for the installer, release artifacts, and CLI updates. The beta bucket is retired and must not be recreated. Keep only the latest five successful releases, deleting older artifacts after successful promotion through the publisher's retention logic.
 
 [Google Rust Guide]: https://google.github.io/styleguide/rustguide.html

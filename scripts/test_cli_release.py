@@ -95,8 +95,7 @@ class ReleaseTest(unittest.TestCase):
         with mock.patch("sys.argv", ["publish-cli.py", "--skip-build", "--artifacts", str(self.root), "--output", str(output)]), \
                 mock.patch.object(publisher, "subprocess", process), \
                 mock.patch.object(publisher, "release_objects", return_value=[]), \
-                mock.patch.object(publisher, "prune_releases"), \
-                mock.patch.object(publisher, "publish_legacy_bridge"):
+                mock.patch.object(publisher, "prune_releases"):
             publisher.main()
         destinations = [call.args[0][call.args[0].index("--key") + 1] if "--key" in call.args[0] else call.args[0][4] for call in process.run.call_args_list]
         self.assertTrue(any(url.endswith("/LICENSE") for url in destinations[:-2]))
@@ -125,8 +124,7 @@ class ReleaseTest(unittest.TestCase):
         with mock.patch("sys.argv", ["publish-cli.py", "--skip-build", "--artifacts", str(self.root), "--output", str(self.root / "output")]), \
                 mock.patch.object(publisher, "subprocess", process), \
                 mock.patch.object(publisher, "release_objects", return_value=[]), \
-                mock.patch.object(publisher, "prune_releases"), \
-                mock.patch.object(publisher, "publish_legacy_bridge"):
+                mock.patch.object(publisher, "prune_releases"):
             with self.assertRaises(subprocess.CalledProcessError):
                 publisher.main()
         for call in process.run.call_args_list:

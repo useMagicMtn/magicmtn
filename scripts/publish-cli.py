@@ -12,9 +12,6 @@ import cli_version
 
 ROOT = Path(__file__).resolve().parents[1]
 BUCKET = "magicmtn-cli-993499103295"
-# Existing CLIs pin this endpoint and reject dotted release IDs. Keep only a
-# copy of the current release here so they can upgrade to the stable endpoint.
-LEGACY_BUCKET = "magicmtn-cli-beta-993499103295"
 PLATFORMS = ("darwin-arm64", "linux-x86_64", "linux-arm64")
 
 
@@ -96,33 +93,6 @@ def prune_releases(aws, current):
                         "--region", "us-east-2", "--only-show-errors"], check=True)
 
 
-def publish_legacy_bridge(aws, payload, output):
-    latest = json.loads(subprocess.check_output([*aws, "s3", "cp", f"s3://{BUCKET}/latest.json", "-", "--region", "us-east-2"], text=True))
-    if latest["release"] != payload["release"]:
-        raise ValueError("Release is not the live latest release; refusing compatibility promotion")
-    identifier = "compat-" + payload["version"].replace(".", "-")
-    for platform in PLATFORMS:
-        name = "magic-" + platform
-        subprocess.run([*aws, "s3", "cp", f"s3://{BUCKET}/releases/{payload['release']}/{name}",
-                        f"s3://{LEGACY_BUCKET}/releases/{identifier}/{name}",
-                        "--region", "us-east-2", "--only-show-errors"], check=True)
-    bridge = output / "legacy-latest.json"
-    bridge.write_text(json.dumps({**payload, "release": identifier}, indent=2) + "\n")
-    for path, name, content_type in [(bridge, "latest.json", "application/json"),
-                                     (output / "install.sh", "install.sh", "text/plain; charset=utf-8")]:
-        subprocess.run([*aws, "s3", "cp", str(path), f"s3://{LEGACY_BUCKET}/{name}",
-                        "--region", "us-east-2", "--content-type", content_type,
-                        "--cache-control", "no-cache", "--only-show-errors"], check=True)
-    # The compatibility bucket holds one copy of the current version, never an
-    # independent release history in addition to the five stable releases.
-    data = json.loads(subprocess.check_output([*aws, "s3api", "list-objects-v2", "--bucket", LEGACY_BUCKET,
-                                              "--prefix", "releases/", "--region", "us-east-2", "--output", "json"], text=True))
-    prefixes = {entry["Key"].split("/")[1] for entry in data.get("Contents", [])}
-    for name in sorted(prefixes - {identifier}):
-        subprocess.run([*aws, "s3", "rm", f"s3://{LEGACY_BUCKET}/releases/{name}/", "--recursive",
-                        "--region", "us-east-2", "--only-show-errors"], check=True)
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--skip-build", action="store_true", help="Publish previously built and checked artifacts")
@@ -169,7 +139,6 @@ def main():
     # Promote only after every immutable artifact has uploaded successfully.
     upload(args.output / "release.json", "latest.json", "application/json", "no-cache")
     upload(args.output / "install.sh", "install.sh", "text/plain; charset=utf-8", "no-cache")
-    publish_legacy_bridge(aws, payload, args.output)
     prune_releases(aws, payload["release"])
     print(f"Published {args.channel} release {payload['release']}")
 

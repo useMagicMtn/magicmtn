@@ -58,28 +58,6 @@ class VersionTest(unittest.TestCase):
                 publisher.prune_releases(["aws"], "1.0.0")
             run.assert_not_called()
 
-    def test_bridge_migrates_old_clients_and_keeps_only_current_copy(self):
-        with tempfile.TemporaryDirectory() as directory:
-            output = Path(directory)
-            (output / "install.sh").write_text("stable installer")
-            objects = {"Contents": [{"Key": "releases/old/magic-linux-arm64"}, {"Key": "releases/compat-1-0-0/magic-linux-arm64"}]}
-            with mock.patch.object(publisher.subprocess, "check_output", side_effect=['{"release":"1.0.0"}', json.dumps(objects)]), mock.patch.object(publisher.subprocess, "run") as run:
-                publisher.publish_legacy_bridge(["aws"], {"release": "1.0.0", "version": "1.0.0"}, output)
-            self.assertEqual(json.loads((output / "legacy-latest.json").read_text())["release"], "compat-1-0-0")
-            calls = [call.args[0] for call in run.call_args_list]
-            self.assertEqual(len(calls), 6)
-            self.assertIn("/releases/1.0.0/magic-darwin-arm64", calls[0][3])
-            self.assertTrue(calls[-1][3].endswith("/releases/old/"))
-            self.assertTrue(calls[-2][4].endswith("/install.sh"))
-
-    def test_failed_bridge_copy_cannot_promote_or_delete(self):
-        import subprocess
-        with tempfile.TemporaryDirectory() as directory, mock.patch.object(publisher.subprocess, "check_output", return_value='{"release":"1.0.0"}'), mock.patch.object(publisher.subprocess, "run", side_effect=subprocess.CalledProcessError(1, "aws")) as run:
-            with self.assertRaises(subprocess.CalledProcessError):
-                publisher.publish_legacy_bridge(["aws"], {"release": "1.0.0", "version": "1.0.0"}, Path(directory))
-            self.assertEqual(run.call_count, 1)
-            self.assertNotIn("latest.json", " ".join(run.call_args.args[0]))
-
     def test_wrong_built_version_and_dirty_source_cannot_prepare(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
