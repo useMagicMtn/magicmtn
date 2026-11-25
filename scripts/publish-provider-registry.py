@@ -7,8 +7,9 @@ complete only after its metadata and user documentation are recorded in Postgres
 """
 import argparse
 import hashlib
+import io
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import subprocess
 import tarfile
@@ -22,17 +23,54 @@ def digest(data):
     return hashlib.sha256(data).hexdigest()
 
 
+def inspect_runtime(payload, spec):
+    if digest(payload) != spec['sha256']:
+        raise ValueError('runtime checksum mismatch')
+    names = set()
+    expanded = 0
+    executables = set()
+    with tarfile.open(fileobj=io.BytesIO(payload), mode='r:gz') as runtime:
+        for entry in runtime:
+            path = PurePosixPath(entry.name)
+            if (not entry.isfile() or path.is_absolute() or '..' in path.parts
+                    or not path.parts or entry.name in names or len(names) >= 50000):
+                raise ValueError('invalid runtime entry')
+            expanded += entry.size
+            if expanded > 1024 * 1024 * 1024:
+                raise ValueError('runtime expands beyond its size limit')
+            names.add(entry.name)
+            if entry.mode & 0o111:
+                executables.add(entry.name)
+    environment = spec['environment']
+    if len(environment) > 16:
+        raise ValueError('too many runtime settings')
+    for key, path in environment.items():
+        if (not re.fullmatch(r'[A-Z0-9_]{1,96}', key)
+                or not (key.startswith('MAGICMTN_')
+                        or key in ('SSL_CERT_FILE', 'REQUESTS_CA_BUNDLE', 'GRPC_DEFAULT_SSL_ROOTS_FILE_PATH'))
+                or path not in names):
+            raise ValueError('invalid runtime environment')
+    if spec['check']['executable'] not in executables or len(spec['check']['args']) > 32:
+        raise ValueError('invalid runtime check')
+
+
 def inspect_package(path):
-    if path.stat().st_size > 64 * 1024 * 1024:
+    if path.stat().st_size > 320 * 1024 * 1024:
         raise ValueError('package too large')
     with tarfile.open(path, 'r:gz') as archive:
         entries = archive.getmembers()
-        if len(entries) != 3 or {e.name for e in entries} != {'package.json', 'provider', 'LICENSE'}:
+        names = {e.name for e in entries}
+        if len(entries) != len(names) or names not in ({'package.json', 'provider', 'LICENSE'}, {'package.json', 'provider', 'LICENSE', 'runtime.tar.gz'}):
             raise ValueError('invalid package entries')
-        if any(not e.isfile() or e.size > (64 * 1024 * 1024 if e.name == 'provider' else 65536) for e in entries):
+        if any(not e.isfile() or e.size > (256 * 1024 * 1024 if e.name == 'runtime.tar.gz' else 64 * 1024 * 1024 if e.name == 'provider' else 65536) for e in entries):
             raise ValueError('invalid package entry type or size')
         manifest = json.load(archive.extractfile('package.json'))
         binary = archive.extractfile('provider').read()
+        runtime = manifest.get('runtime')
+        if (runtime is not None) != ('runtime.tar.gz' in names):
+            raise ValueError('runtime declaration differs from payload')
+        if runtime is not None:
+            inspect_runtime(archive.extractfile('runtime.tar.gz').read(), runtime)
         if manifest['protocol_version'] not in (1, 2) or digest(binary) != manifest['sha256']:
             raise ValueError('invalid protocol or executable digest')
         if not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?', manifest['version']):

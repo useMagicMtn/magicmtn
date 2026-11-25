@@ -17,14 +17,25 @@ OUT = ROOT / 'dist/registry/packages'
 
 
 def package(name, version, os_name, arch, executable, license_path, protocol_version=1):
+    runtime = None
+    runtime_builder = SOURCES / f'provider-{name}' / 'scripts/build-runtime.py'
+    if runtime_builder.exists():
+        runtime_output = ROOT / 'dist/registry/runtimes' / f'{name}-{version}-{os_name}-{arch}'
+        subprocess.run(['python3', str(runtime_builder), '--platform', f'{os_name}-{arch}', '--output', str(runtime_output)], check=True)
+        runtime = (json.loads((runtime_output / 'runtime.json').read_text()), (runtime_output / 'runtime.tar.gz').read_bytes())
     payload = executable.read_bytes()
     manifest = dict(name=name, version=version, protocol_version=protocol_version, os=os_name, arch=arch,
                     sha256=hashlib.sha256(payload).hexdigest())
+    if runtime is not None:
+        manifest["runtime"] = runtime[0]
     OUT.mkdir(parents=True, exist_ok=True)
     target = OUT / f'{name}-{version}-{os_name}-{arch}.tar.gz'
     with target.open('wb') as raw, gzip.GzipFile(filename='', mode='wb', fileobj=raw, mtime=0) as compressed, tarfile.open(fileobj=compressed, mode='w', format=tarfile.USTAR_FORMAT) as archive:
-        for filename, data, mode in [('package.json', json.dumps(manifest).encode(), 0o644),
-                                     ('provider', payload, 0o755), ('LICENSE', license_path.read_bytes(), 0o644)]:
+        entries = [('package.json', json.dumps(manifest).encode(), 0o644),
+                                     ('provider', payload, 0o755), ('LICENSE', license_path.read_bytes(), 0o644)]
+        if runtime is not None:
+            entries.append(('runtime.tar.gz', runtime[1], 0o644))
+        for filename, data, mode in entries:
             info = tarfile.TarInfo(filename)
             info.size, info.mode = len(data), mode
             archive.addfile(info, io.BytesIO(data))

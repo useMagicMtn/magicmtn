@@ -25,6 +25,28 @@ class RegistryReleaseTests(unittest.TestCase):
                 archive.addfile(info, io.BytesIO(body))
         return path
 
+    def test_runtime_payload_checksums_and_paths_are_verified(self):
+        payload = io.BytesIO()
+        with tarfile.open(fileobj=payload, mode='w:gz') as archive:
+            info = tarfile.TarInfo('python/bin/python'); info.size = 7; info.mode = 0o755
+            archive.addfile(info, io.BytesIO(b'fixture'))
+        data = payload.getvalue()
+        spec = {'sha256': publisher.digest(data), 'environment': {'MAGICMTN_FIXTURE_PYTHON': 'python/bin/python'},
+                'check': {'executable': 'python/bin/python', 'args': []}}
+        publisher.inspect_runtime(data, spec)
+        with self.assertRaisesRegex(ValueError, 'checksum'):
+            publisher.inspect_runtime(data + b'changed', spec)
+        spec['environment'] = {'PATH': 'python/bin/python'}
+        with self.assertRaisesRegex(ValueError, 'environment'):
+            publisher.inspect_runtime(data, spec)
+        escaped = io.BytesIO()
+        with tarfile.open(fileobj=escaped, mode='w:gz') as archive:
+            info = tarfile.TarInfo('../outside'); info.size = 0
+            archive.addfile(info, io.BytesIO())
+        data = escaped.getvalue(); spec['sha256'] = publisher.digest(data)
+        with self.assertRaisesRegex(ValueError, 'runtime entry'):
+            publisher.inspect_runtime(data, spec)
+
     def test_unsupported_names_cannot_publish(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
