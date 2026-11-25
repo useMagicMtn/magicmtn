@@ -1,0 +1,5 @@
+{% if !card.preparations.is_empty() %}
+<ul>{% for preparation in card.preparations %}
+  <li>{{ preparation.provider }} · {% if preparation.ready %}Prepared{% else %}Requires preparation{% endif %}</li>
+{% endfor %}</ul>
+{% endif %}

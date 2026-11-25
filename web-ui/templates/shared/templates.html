@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Templates · MagicMtn{% endblock %}
+{% block breadcrumb %}General{% endblock %}
+{% block head %}
+<script src="/static/templates.js" defer></script>
+<link rel="stylesheet" href="/static/templates.css">
+{% endblock %}
+{% block content %}
+<div class="page-heading">
+  <div>
+    <h1>Templates</h1>
+    <p class="lede">The <code>default</code> template is used by your sandboxes. Add {% block repo_kind %}public GitHub{% endblock %} repositories as owner/repo, and they'll be automatically cloned inside your new machines.</p>
+    {% block template_docs %}{% endblock %}
+  </div>
+</div>
+<section class="list-panel" aria-labelledby="template-heading">
+  <div class="panel-heading"><h2 id="template-heading">default</h2><span class="badge">Default template</span></div>
+  <form id="template-form" class="template-form">
+    <div class="field">
+      <label for="template-toml">Template TOML</label>
+      <p id="template-help">Descriptions can contain up to 160 characters.</p>
+      <textarea id="template-toml" name="toml" rows="15" spellcheck="false" autocapitalize="off" autocomplete="off" aria-describedby="template-help" required>{{ source }}</textarea>
+    </div>
+    <div class="template-actions">
+      <p id="template-status" role="status" aria-live="polite"></p>
+      <button id="template-save" class="button primary" type="submit">Save template</button>
+    </div>
+  </form>
+</section>
+{% endblock %}

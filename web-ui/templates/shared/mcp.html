@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}MCP Catalog · MagicMtn{% endblock %}
+{% block breadcrumb %}General{% endblock %}
+{% block head %}<script src="/static/mcp-catalog.js" defer></script>{% block mcp_scripts %}{% endblock %}{% endblock %}
+{% block content %}
+<div class="page-heading"><div><h1>MCP Catalog</h1><p class="lede">{% block catalog_intro %}Choose a service to configure in your MCP client.{% endblock %}</p></div></div>
+<div id="mcp-search" class="field mcp-search" role="search" aria-label="MCP Catalog" hidden>
+  <label for="mcp-search-input">Search MCPs</label>
+  <input id="mcp-search-input" type="search" placeholder="Name, category, or capability" autocomplete="off" spellcheck="false" aria-controls="mcp-list mcp-catalog">
+  <p id="mcp-search-status" role="status"></p>
+</div>
+{% block connections %}{% endblock %}
+<section id="mcp-add-panel" class="list-panel mcp-panel" aria-labelledby="mcp-add-title">
+  <div class="panel-heading"><h2 id="mcp-add-title">{% block catalog_title %}Services{% endblock %}</h2></div>
+  <div id="mcp-catalog" class="mcp-grid">
+    {% for service in services %}
+    <article id="mcp-add-{{ service.id }}" class="integration-tile">
+      <div class="integration-tile-header"><span class="integration-category">{{ service.category }}</span></div>
+      <h3>{{ service.name }}</h3><p>{{ service.description }}</p>
+      {% include "mcp_action.html" %}
+    </article>
+    {% endfor %}
+  </div>
+</section>
+
+{% block setup_dialogs %}{% endblock %}
+{% endblock %}

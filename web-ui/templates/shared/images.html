@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Image Registry · MagicMtn{% endblock %}
+{% block breadcrumb %}General{% endblock %}
+{% block head %}{% include "image_head.html" %}{% endblock %}
+{% block content %}
+<div class="page-heading"><div><div class="eyebrow">COMPUTE</div><h1>Image Registry</h1><p class="lede">Container images for this workspace.</p></div></div>
+<section class="list-panel" aria-labelledby="images-heading"><h2 id="images-heading">Container images</h2>
+{% if images.is_empty() %}
+<p>No registered images.</p>
+{% else %}
+<div class="agent-list">
+{% for card in images %}
+<article class="agent-row"><div class="agent-main">
+<h3>{{ card.name }}</h3>
+{% if !card.description.is_empty() %}<p>{{ card.description }}</p>{% endif %}
+{% include "image_details.html" %}
+</div></article>
+{% endfor %}
+</div>
+{% endif %}
+</section>
+{% endblock %}

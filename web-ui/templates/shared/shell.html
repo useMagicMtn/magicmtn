@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en"{% block page_theme %}{% endblock %}>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}MagicMtn{% endblock %}</title>
+  <link rel="icon" href="/static/favicon.svg?v=furnace-1" type="image/svg+xml" sizes="any">
+  <script>if (!document.documentElement.dataset.theme) { try { document.documentElement.dataset.theme = localStorage.getItem('magicmtn-dashboard-theme') === 'light' ? 'light' : 'dark'; } catch { document.documentElement.dataset.theme = 'dark'; } }</script>
+  <link rel="preload" href="/static/dashboard.js?v=shared-shell" as="script">
+  <link rel="preload" href="/static/fonts/PublicSans.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/static/furnace.css?v=3">
+  <link rel="stylesheet" href="/static/app.css?v=6a7479fb1f">
+  <link rel="stylesheet" href="/static/layout.css?v=shared-shell">
+  <script src="/static/htmx.min.js" defer></script>
+  {% block extra_head %}{% endblock %}
+  {% block head %}{% endblock %}
+  <link rel="stylesheet" href="/static/shell.css?v=shared-shell">
+  {% block extension_styles %}{% endblock %}
+</head>
+<body class="{% block body_class %}dashboard-app{% endblock %}">
+  <a class="dashboard-skip" href="#main-content">Skip to content</a>
+  <aside class="ck-top-menu dashboard-menu dashboard-sidebar" id="workspace-sidebar" aria-label="Sidebar">
+    <div class="dashboard-menu-inner">
+      <div class="sidebar-brand-row">
+        <a class="ck-top-menu__link dashboard-brand" href="{% block brand_href %}/compute/images{% endblock %}" aria-label="MagicMtn home">
+          <img class="dashboard-wordmark dashboard-wordmark--light" src="/static/wordmark.svg?v=furnace-1" alt="" width="1475" height="269">
+          <img class="dashboard-wordmark dashboard-wordmark--dark" src="/static/wordmark-dark.svg?v=furnace-1" alt="" width="1475" height="269">
+        </a>
+        <button type="button" class="shell-icon-button sidebar-close" aria-label="Close navigation" data-sidebar-close><svg class="shell-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 6 12 12M6 18 18 6"/></svg></button>
+      </div>
+      {% block navigation %}
+      <div class="dashboard-navigation">
+        {% block account_navigation %}{% endblock %}
+        <nav class="ck-top-menu__group sidebar-workspace" aria-label="Main navigation">
+          {% block workspace_nav_start %}{% endblock %}
+          <a class="ck-top-menu__link" href="/compute/images"><svg class="shell-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3 8 4.5v9L12 21l-8-4.5v-9L12 3Zm0 9 8-4.5M12 12 4 7.5M12 12v9"/></svg><span>Images</span></a>
+          {% block workspace_nav_end %}{% endblock %}
+        </nav>
+        {% block secondary_navigation %}{% endblock %}
+      </div>
+      {% endblock %}
+    </div>
+  </aside>
+  <div class="sidebar-divider" id="sidebar-divider" role="separator" tabindex="0" aria-label="Resize navigation" aria-orientation="vertical" aria-controls="workspace-sidebar" aria-valuemin="0" aria-valuemax="360" aria-valuenow="240" title="Drag to resize or collapse navigation. Use arrow keys to resize; Enter to toggle."></div>
+  <button class="sidebar-backdrop" type="button" aria-label="Close navigation" data-sidebar-close hidden></button>
+  <div class="workspace-frame" id="workspace-frame">
+    <header class="workspace-topbar">
+      <button class="shell-icon-button sidebar-toggle" id="sidebar-toggle" type="button" aria-label="Open navigation" aria-expanded="false" aria-controls="workspace-sidebar"><svg class="shell-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/></svg></button>
+      <span class="workspace-breadcrumb"><span id="workspace-page-title">{% block breadcrumb %}{% endblock %}</span></span>
+    </header>
+    <main id="main-content" tabindex="-1">{% block content %}{% endblock %}</main>
+  </div>
+  {% block after_content %}{% endblock %}
+  {% block public_footer %}{% endblock %}
+  <footer class="dashboard-statusbar" aria-label="Statusbar">
+    <span class="statusbar-brand">MagicMtn <span class="statusbar-copyright">© 2026</span></span>
+    <span id="connection-status" role="status" hidden>Offline · check your connection</span>
+    <div class="statusbar-actions">
+      {% block footer_links %}{% endblock %}
+      <button type="button" id="statusbar-theme" class="statusbar-button" title="Toggle theme (D)"><svg class="shell-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.5 13A8.5 8.5 0 0 1 11 3.5 8.5 8.5 0 1 0 20.5 13Z"/></svg><span id="statusbar-theme-label">Dark mode</span></button>
+      <button type="button" class="statusbar-button" data-ck-modal-open="keyboard-shortcuts" title="Keyboard shortcuts (/)"><svg class="shell-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="5" width="20" height="14" rx="3"/><path d="M6 9h.01M10 9h.01M14 9h.01M18 9h.01M6 13h.01M10 13h.01M14 13h.01M18 13h.01M8 16h8"/></svg><span>Shortcuts</span></button>
+    </div>
+  </footer>
+  <dialog class="ck-modal dashboard-shortcuts" id="keyboard-shortcuts" aria-labelledby="keyboard-navigation-title" aria-describedby="keyboard-shortcuts-description">
+    <div class="ck-modal__header">
+      <div>
+        <h2 class="ck-modal__eyebrow" id="keyboard-navigation-title">Keyboard navigation</h2>
+      </div>
+      <form method="dialog">
+        <button class="ck-modal__close" type="submit" aria-label="Close keyboard navigation">&times;</button>
+      </form>
+    </div>
+    <div class="ck-modal__body" id="keyboard-shortcuts-description">
+      <div id="navigation-shortcuts"></div>
+      {% block extra_shortcuts %}{% endblock %}
+      <div class="shortcut-row">
+        <span>Toggle dark / light mode</span>
+        <kbd>d</kbd>
+      </div>
+    </div>
+  </dialog>
+
+  {% block extensions %}{% endblock %}
+  <script src="/static/dashboard.js?v=shared-shell"></script>
+</body>
+</html>

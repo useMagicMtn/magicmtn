@@ -1,0 +1,9 @@
+{% extends "shared/shell.html" %}
+{% block brand_href %}/compute/computers{% endblock %}
+{% block workspace_nav_start %}
+{% include "shared/workspace_tools.html" %}
+<a class="ck-top-menu__link" href="/compute/computers" data-go-key="c"><svg class="shell-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M12 17v4m-5 0h10"/></svg><span>Computers</span></a>
+{% endblock %}
+{% block workspace_nav_end %}
+<a class="ck-top-menu__link" href="/providers" data-go-key="p"><svg class="shell-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M8 2v5m8-5v5M5 7h14v3a7 7 0 0 1-14 0zm7 10v5"/></svg><span>Providers</span></a>
+{% endblock %}

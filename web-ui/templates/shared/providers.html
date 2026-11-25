@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Providers · MagicMtn{% endblock %}
+{% block breadcrumb %}Compute{% endblock %}
+{% block content %}
+<div class="page-heading"><h1>Providers</h1></div>
+<section class="list-panel" aria-labelledby="installed-heading">
+  <div class="panel-heading"><h2 id="installed-heading">Installed releases</h2></div>
+  {% for provider in installed %}
+  <article class="agent-row"><div class="agent-main"><h3>{{ provider.name }}</h3><p>{{ provider.version }} · {{ provider.platform }}{% if provider.active %} · Active{% endif %}</p></div></article>
+  {% endfor %}
+  {% if installed.is_empty() %}<div class="agent-row"><p>No installed releases.</p></div>{% endif %}
+</section>
+{% endblock %}

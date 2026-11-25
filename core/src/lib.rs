@@ -29,3 +29,5 @@ pub mod schema;
 #[cfg(feature = "sqlite")]
 pub mod sandbox_images;
 pub mod sandbox_storage;
+
+pub mod workspace_template;
