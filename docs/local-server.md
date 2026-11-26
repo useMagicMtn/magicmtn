@@ -4,7 +4,7 @@ Run sandboxes on your Mac through a single-user MagicMtn server. The server stor
 
 ## Prepare your machine
 
-Install the [MagicMtn CLI](../README.md#install-from-source) and [Apple Container](https://github.com/apple/container). Start the container runtime:
+Install the [MagicMtn CLI](../documentation/docs/cli-basics.md#install) and [Apple Container](https://github.com/apple/container). Start the container runtime:
 
 ```sh
 container system start
@@ -96,7 +96,7 @@ Stop the server before installing or uninstalling providers. Keep provider relea
 
 | Setting                     | Purpose                                                                                                                  |
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `--network default`         | Give new Apple Container sandboxes internet access. Use `--network none` for an isolated network.                        |
+| `--network NAME`            | Override the Apple Container provider’s network. The provider defaults to `default` for internet access. Use `none` for isolation.                        |
 | `--ui-bind 127.0.0.1:PORT`  | Choose the web dashboard port. The listener must use a loopback address.                                                 |
 | `--bind 127.0.0.1:PORT`     | Choose the local server port. The listener must use a loopback address.                                                  |
 | `MAGICMTN_CONFIG_DIRECTORY` | Change the CLI configuration and installed-provider directory from `~/.config/magicmtn`.                                 |

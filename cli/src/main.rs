@@ -227,7 +227,7 @@ enum ServerCommands {
         ui_bind: std::net::SocketAddr,
         #[arg(long, default_value_t = 86400, value_parser = clap::value_parser!(u32).range(1..=86400))]
         ttl_seconds: u32,
-        /// Apple Container network for new sandboxes; use default for internet access
+        /// Override the Apple Container network for new sandboxes; use none for isolation
         #[arg(long, value_parser = magicmtn_local::network_name)]
         network: Option<String>,
     },
@@ -1250,6 +1250,15 @@ fn pi_attach_rejects_removed_relay_options() {
 #[cfg(test)]
 #[test]
 fn local_server_accepts_explicit_network_names() {
+    let cli = Cli::try_parse_from(["magic", "server", "start"]).unwrap();
+    let Some(Commands::Server {
+        command: ServerCommands::Start { network, .. },
+    }) = cli.command
+    else {
+        panic!("expected server start");
+    };
+    assert_eq!(network, None);
+
     for name in ["default", "none", "my-network.1", "local_net"] {
         let cli = Cli::try_parse_from(["magic", "server", "start", "--network", name]).unwrap();
         let Some(Commands::Server {
