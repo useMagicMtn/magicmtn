@@ -41,7 +41,7 @@
     },
     {
       "name": "modal",
-      "description": "Run remote Linux sandboxes on Modal.",
+      "description": "Run chat inference with Modal endpoints and remote Linux sandboxes on Modal.",
       "platforms": [
         "macos-aarch64",
         "linux-x86_64",
