@@ -187,3 +187,29 @@ fn lifecycle_trait_allows_a_subset_without_changing_inference() {
     );
     assert!(!error.retryable);
 }
+
+#[test]
+fn provider_model_choices_are_optional_and_do_not_select_a_default() {
+    use magicmtn_sdk::plugin::{Capabilities, InferenceModel};
+    let legacy = Capabilities::inference(vec!["chat".into()]);
+    let wire = serde_json::to_value(&legacy).unwrap();
+    assert!(wire.get("inference_models").is_none());
+    assert!(serde_json::from_value::<Capabilities>(wire)
+        .unwrap()
+        .inference_models
+        .is_empty());
+    let mut choices = legacy;
+    choices.inference_models = vec![InferenceModel {
+        id: "example/model".into(),
+        name: "Example model".into(),
+        context_window: 32768,
+        max_tokens: 4096,
+    }];
+    let wire = serde_json::to_value(&choices).unwrap();
+    assert_eq!(wire["inference_models"][0]["id"], "example/model");
+    assert!(wire.get("default_model").is_none());
+    assert_eq!(
+        serde_json::from_value::<Capabilities>(wire).unwrap(),
+        choices
+    );
+}

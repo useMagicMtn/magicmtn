@@ -145,7 +145,7 @@ export default function magicmtn(pi) {
       inference.clear();
       pi.unregisterProvider("magicmtn");
       if (mode !== "local") localTools = await registerLocalTools(pi, magic);
-      ctx.ui.setStatus("magicmtn", "MagicMtn · Local · sandbox tools");
+      ctx.ui.setStatus("magicmtn", "MagicMtn · Local");
     } else if (mode === "local") {
       pi.setActiveTools(pi.getActiveTools().filter((name) => !localTools.includes(name)));
       ctx.ui.setStatus("magicmtn", undefined);
@@ -162,7 +162,7 @@ export default function magicmtn(pi) {
   };
   const updateStatus = (model, ctx) => {
     if (mode === "local") {
-      ctx.ui.setStatus("magicmtn", "MagicMtn · Local · sandbox tools");
+      ctx.ui.setStatus("magicmtn", "MagicMtn · Local");
       return;
     }
     const managed = model?.provider === "magicmtn" && inference.model(model.id);
@@ -174,7 +174,6 @@ export default function magicmtn(pi) {
     try {
       const account = await magic(["pi", "account"]);
       if (await synchronizeMode(ctx, account) === "local") {
-        if (ctx.model?.provider === "magicmtn") ctx.ui.notify("Choose your Pi model with /model to use your provider in local mode.", "info");
         return;
       }
       if (account.signed_in) {

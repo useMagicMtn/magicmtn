@@ -34,6 +34,16 @@ pub enum InferenceDeploymentOperation {
     Delete,
 }
 
+/// A selectable model supplied by a provider package, independent of account setup.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InferenceModel {
+    pub id: String,
+    pub name: String,
+    pub context_window: u32,
+    pub max_tokens: u32,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Capabilities {
@@ -44,6 +54,9 @@ pub struct Capabilities {
     #[serde(default, skip_serializing_if = "is_false")]
     pub search: bool,
     pub inference_tasks: Vec<String>,
+    /// Provider-distributed model choices; no entry is selected automatically.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub inference_models: Vec<InferenceModel>,
     /// Optional v1 extension. Omitted for inference-only and older providers.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub inference_deployment_operations: Vec<InferenceDeploymentOperation>,
@@ -59,6 +72,7 @@ impl Capabilities {
             setup: None,
             search: false,
             inference_tasks: vec![],
+            inference_models: vec![],
             inference_deployment_operations: vec![],
             sandbox_operations: operations,
             editable_surfaces: vec![],
@@ -72,6 +86,7 @@ impl Capabilities {
             setup: None,
             search: false,
             inference_tasks: tasks,
+            inference_models: vec![],
             inference_deployment_operations: vec![],
             sandbox_operations: vec![],
             editable_surfaces: vec![],

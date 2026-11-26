@@ -41,85 +41,20 @@ brew install useMagicMtn/tap/magic
 
 See the [CLI installation guide](https://magicmtn.ai/docs/cli-basics/#install) for more options.
 
-### Set up Pi
+### Example: Remote inference (via Modal) with local isolation (via Apple Container)
 
-Sign in to MagicMtn Cloud, install the MagicMtn extension, and open Pi.
+Use Modal for inference while Pi works inside a MagicMtn Canonical [^1] VM on your Apple silicon Mac. MagicMtn manages Pi, the inference connection, and the sandbox lifecycle.
 
-```sh
-magic login
-magic agents install pi
-pi
-```
+#### Install Modal and set up access
 
-In Pi, run `/magic new` to start a managed workspace. Press **Ctrl+]** to disconnect while Pi keeps running, then use `/magic view` and choose **Resume** to rejoin. [Pi setup guide](https://magicmtn.ai/docs/coding-agents/pi/)
-
-### Example A: Run a local sandbox provider (e.g. Apple Container)
-
-Run a sandbox on your Apple silicon Mac, execute a task inside it, and connect Pi to local sandboxes. Install [Apple Container](https://github.com/apple/container), then start its runtime and install the MagicMtn provider.
-
-```sh
-container system start
-magic provider install apple-container
-```
-
-Start the local server in its own terminal with internet access for new sandboxes.
-
-```sh
-magic server start
-```
-
-Keep this terminal open. In another terminal, prepare the bundled Canonical image and create a sandbox.
-
-```sh
-magic images list
-magic images prepare canonical --provider apple-container
-sandbox_id=$(magic computer new --image canonical --provider apple-container)
-magic computer list
-```
-
-Run a Python task that writes a file inside the sandbox, then read the file in a separate command.
-
-```sh
-magic computer exec "$sandbox_id" -- python3 -c 'from pathlib import Path; Path("/workspace/hello.txt").write_text("Hello from MagicMtn!\n")'
-magic computer exec "$sandbox_id" -- cat /workspace/hello.txt
-```
-
-The second command returns `Hello from MagicMtn!` in its output. Delete the sandbox and its files when finished.
-
-```sh
-magic computer terminate "$sandbox_id" --yes
-```
-
-To let Pi create and work in local sandboxes, install the extension and start Pi.
-
-```sh
-magic agents install pi
-pi
-```
-
-In Pi, use `/login` to connect your inference provider and `/model` to choose a model. Run `/magic new` and select Canonical with Apple Container, then ask Pi to create and run a Python script in the sandbox. Use `/magic view` to manage your sandboxes.
-
-After leaving Pi, run `magic computer list` and terminate any sandboxes you have finished using with `magic computer terminate <ID> --yes`. Run `magic server stop` to stop the local server. See the [local quickstart](docs/local-server.md) for custom images and configuration.
-
-### Example B: use a cloud-based sandbox provider (e.g. Modal)
-
-This example shows how you can run MagicMtn pointing to your own sandbox/VMs provider — in this case using Modal. MagicMtn manages the machines.
-
-To run sandboxes in your own Modal account, install the provider from the MagicMtn Registry. [Modal provider](https://magicmtn.ai/registry/modal)
+Install the [Modal provider](https://magicmtn.ai/registry/modal) and the Apple Container provider from the MagicMtn Registry:
 
 ```sh
 magic provider install modal
+magic provider install apple-container
 ```
 
-Installation includes the provider's private Python runtime and Modal SDK. Configuring the provider creates or selects the `magicmtn` app in your Modal account.
-
-Start the local server in its own terminal.
-
-```sh
-magic server start
-```
-
-Create an API token in your Modal workspace and save it in a private file named `modal-credentials.json`. [Modal API tokens](https://modal.com/docs/guide/workspaces)
+Create a [Modal workspace API token](https://modal.com/docs/guide/workspaces) with access to manage endpoints and Proxy Tokens. Save it as `modal-credentials.json`:
 
 ```json
 {
@@ -128,26 +63,60 @@ Create an API token in your Modal workspace and save it in a private file named 
 }
 ```
 
-In another terminal, verify and store the token, prepare the bundled Canonical image on Modal, and start Pi.
+Start the local server in its own terminal and keep it open:
+
+```sh
+magic server start
+```
+
+In another terminal, configure Modal:
 
 ```sh
 magic provider configure modal --secret-file ./modal-credentials.json
-magic images list
-magic images prepare canonical --provider modal
+```
+
+This establishes access to your Modal account. Model selection determines which inference resource MagicMtn provisions; the provider manages its endpoint and credentials.
+
+#### Prepare local isolation with Apple Container
+
+Install [Apple Container](https://github.com/apple/container#get-started) on your Apple silicon Mac, start its runtime, and make the Canonical image available to it:
+
+```sh
+container system start
+magic images prepare canonical --provider apple-container
+```
+
+#### Run MagicMtn-managed Pi
+
+Install the MagicMtn Pi integration and open Pi:
+
+```sh
 magic agents install pi
 pi
 ```
 
-In Pi, use `/login` to connect your inference provider and `/model` to choose a model. Run `/magic new` to select a prepared image and provider. Pi can run commands and work with files in the sandbox through the MagicMtn tools.
+In Pi, run `/magic default` and select **Kimi K3** with **Modal** as the inference provider. Run `/magic new` and choose **Apple Container** as the sandbox backend. MagicMtn starts Pi inside the local VM and routes its model requests to your Modal endpoint.
 
-To use your own image, register and prepare it without editing Canonical:
+Ask Pi to work in its isolated workspace:
+
+> Create a Python script in /computer that prints the first 20 Fibonacci numbers, run it, and show me the output.
+
+Press **Ctrl+]** to disconnect while Pi keeps running. Use `/magic view` and choose **Resume** to reconnect, or **Terminate** to delete the workspace when finished.
+
+#### Bonus: isolation with Modal sandboxes
+
+Run the same Pi workflow inside a sandbox in your own Modal account.
+
+Reuse the configured Modal connection and selected model, and make the Canonical image available to Modal:
 
 ```sh
-magic images add my-dev --from ghcr.io/my-org/dev:1.0
-magic images prepare my-dev --provider modal
+magic images prepare canonical --provider modal
+pi
 ```
 
-The image must include the sandbox runtime and Pi; see [custom images](docs/local-server.md#add-a-custom-image). Preparation validates the image and saves its Modal image ID locally, so users do not maintain image mappings.
+Keep the same model in `/magic default`. Run `/magic new` and choose **Modal** as the sandbox backend. MagicMtn runs Pi in the Modal sandbox and sends inference requests to the same model endpoint.
+
+Use the same prompt, **Ctrl+]** to disconnect, and `/magic view` to resume or terminate the workspace. After terminating your workspaces, run `magic server stop` to stop the local server. See the [Modal provider setup guide](https://github.com/useMagicMtn/provider-modal/blob/main/USAGE.md) for account and endpoint configuration.
 
 ## Use the MagicMtn Web UI
 
@@ -155,7 +124,21 @@ Start the server with `magic server start`, then open <http://localhost:1900> to
 
 See the [Web UI guide](https://magicmtn.ai/docs/web-ui/) for a tour.
 
-## Connect to hosted MagicMtn
+## Using MagicMtn Cloud
+
+Sign up for [MagicMtn Cloud](https://magicmtn.ai/), our managed platform for inference and cloud computers for agents.
+
+### Set up Pi
+
+Install the its Pi extension, and open Pi.
+
+```sh
+magic login
+magic agents install pi
+pi
+```
+
+In Pi, run `/magic new` to start a managed workspace. Press **Ctrl+]** to disconnect while Pi keeps running, then use `/magic view` and choose **Resume** to rejoin. [Pi setup guide](https://magicmtn.ai/docs/coding-agents/pi/)
 
 For OpenCode 2.3.2 or later, sign in with `magic login`, then run `magic agents install opencode`. Hosted and local modes have separate credentials.
 
@@ -166,3 +149,5 @@ CLI [error reporting](docs/error-reporting.md) is opt-in.
 See [CONTRIBUTING.md](CONTRIBUTING.md) to build and test the engine and SDK. Send vulnerability reports through the private channel in [SECURITY.md](SECURITY.md).
 
 MagicMtn is licensed under the [Apache License 2.0](LICENSE).
+
+[^1]: MagicMtn Canonical is the default machine/sandbox image.

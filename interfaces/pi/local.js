@@ -19,50 +19,65 @@ export async function registerLocalTools(pi, request) {
 }
 
 export async function localMenu(action, ctx, request, terminal) {
-  const call = async (name, args = {}) => {
-    const result = await request(["--local", "mcp", "call", name], undefined, args);
-    if (result.isError) throw new Error(result.content.map((item) => item.text || "").join("\n"));
-    return JSON.parse(result.content[0].text);
-  };
-  if (!action) action = await ctx.ui.select("MagicMtn · Local", ["New sandbox", "View computers"]);
+  const run = (args) => request(["--local", "pi", ...args]);
+  if (!action) action = await ctx.ui.select("MagicMtn · Local", ["New computer", "View computers", "Default model"]);
   if (!action) return;
-  if (["default", "inference", "Inference only"].includes(action)) {
-    ctx.ui.notify("Choose your Pi model with /model. Pi uses your existing provider login.", "info");
-    return;
-  }
-  if (["new", "New sandbox"].includes(action)) {
-    const catalog = await request(["--local", "images", "list", "--format", "json"]);
-    const choices = catalog.images.flatMap((image) => image.preparations.filter((preparation) => preparation.ready)
-      .map((preparation) => ({ image: image.name, provider: preparation.provider,
-        label: `${image.name}${image.is_default ? " · default" : ""} · ${preparation.provider}` })));
+  const chooseModel = async (catalog) => {
+    const choices = catalog.models.map((model) => ({ ...model, label: `${model.display_name} · ${model.provider}` }));
     if (!choices.length) {
-      ctx.ui.notify("Prepare an image with magic --local images prepare canonical --provider PROVIDER, then run /magic new.", "info");
+      ctx.ui.notify("Install and configure an inference provider with magic provider install and magic provider configure.", "info");
       return;
     }
-    const selection = choices.length === 1 ? choices[0].label : await ctx.ui.select("Sandbox image and provider", choices.map((choice) => choice.label));
-    const choice = choices.find((item) => item.label === selection);
-    if (!choice) return;
-    const sandbox = await call("sandbox_create", { image: choice.image, provider: choice.provider });
-    ctx.ui.notify(`Created sandbox ${sandbox.id}. Pi can use the MagicMtn sandbox tools.`, "info");
+    const selection = await ctx.ui.select("Default inference model", choices.map((model) => model.label));
+    const model = choices.find((item) => item.label === selection);
+    if (!model) return;
+    ctx.ui.notify(`Preparing ${model.display_name} with ${model.provider}…`, "info");
+    await run(["defaults", "--model", model.id]);
+    ctx.ui.notify(`Default model: ${model.display_name} · ${model.provider}`, "info");
+    return model.id;
+  };
+  if (["default", "inference", "Default model"].includes(action)) {
+    await chooseModel(await run(["catalog"]));
+    return;
+  }
+  if (["new", "New computer"].includes(action)) {
+    const catalog = await run(["catalog"]);
+    const modelId = catalog.defaults?.model_id || await chooseModel(catalog);
+    if (!modelId) return;
+    const images = await request(["--local", "images", "list", "--format", "json"]);
+    const image = images.images.find((item) => item.is_default);
+    const providers = [...new Set((image?.preparations || []).filter((item) => item.ready).map((item) => item.provider))];
+    if (!providers.length) {
+      ctx.ui.notify("Prepare Canonical with magic images prepare canonical --provider PROVIDER, then run /magic new.", "info");
+      return;
+    }
+    const provider = providers.length === 1 ? providers[0] : await ctx.ui.select("Sandbox backend", providers);
+    if (!provider) return;
+    const workspace = await run(["local-create", "--provider", provider, "--model", modelId]);
+    await terminal(ctx, ["--local", "pi", "attach", workspace.id]);
     return;
   }
   if (!["view", "open", "View computers"].includes(action)) {
-    ctx.ui.notify("Usage: /magic [new|view|inference]", "info");
+    ctx.ui.notify("Usage: /magic [default|new|view]", "info");
     return;
   }
-  const sandboxes = (await call("sandbox_list")).filter((item) => ["running", "starting"].includes(item.status));
-  if (!sandboxes.length) {
-    ctx.ui.notify("Use /magic new to create a sandbox.", "info");
+  const { workspaces } = await run(["list"]);
+  const sessions = workspaces.filter((item) => item.desired !== "terminated");
+  if (!sessions.length) {
+    ctx.ui.notify("Use /magic new to create a computer.", "info");
     return;
   }
-  const selection = await ctx.ui.select("Local sandboxes", sandboxes.map((item) => `${item.id} · ${item.status}`));
-  if (!selection) return;
-  const sandbox = sandboxes.find((item) => selection.startsWith(item.id));
-  if (!sandbox) return;
-  const operation = await ctx.ui.select(`Sandbox ${sandbox.id}`, ["Open shell", "Terminate"]);
-  if (operation === "Open shell") await terminal(ctx, ["--local", "computer", "ssh", sandbox.id]);
-  if (operation === "Terminate" && await ctx.ui.confirm("Terminate sandbox", `Delete sandbox ${sandbox.id} and its files?`)) {
-    await call("sandbox_terminate", { id: sandbox.id });
-    ctx.ui.notify(`Terminated sandbox ${sandbox.id}.`, "info");
+  const selection = await ctx.ui.select("Local computers", sessions.map((item) => `${item.id} · ${item.provider} · ${item.status}`));
+  const workspace = sessions.find((item) => selection?.startsWith(item.id));
+  if (!workspace) return;
+  const operation = await ctx.ui.select(`Computer ${workspace.id}`, ["Resume", "Terminate"]);
+  if (operation === "Resume") {
+    const session = await run(["status", workspace.id]);
+    if (["stopped", "exited"].includes(session.status)) await run(["restart", workspace.id]);
+    await terminal(ctx, ["--local", "pi", "attach", workspace.id]);
+  }
+  if (operation === "Terminate" && await ctx.ui.confirm("Terminate computer", `Delete computer ${workspace.id} and its files?`)) {
+    await run(["terminate", workspace.id]);
+    ctx.ui.notify(`Terminated computer ${workspace.id}.`, "info");
   }
 }

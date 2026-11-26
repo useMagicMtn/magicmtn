@@ -49,6 +49,8 @@ Attach explicit credentials before invoking either method. `configure` may idemp
 
 The host validates declared options, rejects credential fields and settings outside the provider's `MAGICMTN_PROVIDER_` namespace, and persists configuration separately from encrypted credentials. It preserves setup across restarts and provider upgrades. Changed settings advance the connection generation for future resources; existing resources retain their frozen bindings. Providers without setup support keep the credential-verification flow.
 
+Providers that manage persistent resource receipts or generated credentials can declare a `state_directory` setup option. The local host supplies an absolute directory scoped to the installation and provider connection when the user omits that option. The provider creates private files there and returns the path in its own configuration namespace; SDK and other hosts supply an equivalent persistent directory. Preserve this directory across process restarts and provider upgrades. Generated credentials belong in private credential files, and setup responses contain their locations rather than their contents.
+
 ## Use a configured connection
 
 ```sh

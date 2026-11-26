@@ -53,7 +53,7 @@ if(args[1]==='defaults'){const c=JSON.parse(fs.readFileSync(${JSON.stringify(cat
 if(args[1]==='terminate'){const items=JSON.parse(fs.readFileSync(${JSON.stringify(workspacesPath)},'utf8'));fs.writeFileSync(${JSON.stringify(workspacesPath)},JSON.stringify(items.filter(w=>w.id!==args[2])));result={status:'ended'}};
 if(args[1]==='list')result={workspaces:JSON.parse(fs.readFileSync(${JSON.stringify(workspacesPath)},'utf8'))};
 if(args[0]==='images' && args[1]==='list')result={images:${JSON.stringify(localImages)}};
-if(args[1]==='create'){if(${failCreate}){console.error('Creation uncertain; inspect workspace');process.exit(1)}if(${removeCliBeforeAttach})fs.unlinkSync(process.argv[1]);result=${JSON.stringify(workspace)}}
+if(['create','local-create'].includes(args[1])){if(${failCreate}){console.error('Creation uncertain; inspect workspace');process.exit(1)}if(${removeCliBeforeAttach})fs.unlinkSync(process.argv[1]);result=${JSON.stringify(workspace)}}
 if(args[1]==='inference')result={baseUrl:'https://magic.test/v1/pi/agent',apiKey:'scoped',api:'openai-completions',models:[{...JSON.parse(fs.readFileSync(${JSON.stringify(catalogPath)},'utf8')).models.find(m=>m.id===args[args.indexOf('--model')+1]),name:'Managed model',contextWindow:65536,maxTokens:8192}],expiresIn:86400};
 console.log(JSON.stringify(result));`;
   writeFileSync(join(directory, "magic"), cli, { mode: 0o755 });
@@ -466,35 +466,36 @@ test("local startup keeps Pi's own model and loads sandbox tools without Cloud c
   assert.equal(f.ctx.model, native);
   assert.equal(f.provider(), undefined);
   assert.deepEqual(f.calls(), [["pi","account"],["--local","mcp","tools"]]);
-  assert.match(f.statuses.get("magicmtn"), /Local.*sandbox tools/);
+  assert.match(f.statuses.get("magicmtn"), /Local/);
   assert.ok(f.tools.has("magic_sandbox_list"));
   assert.deepEqual(f.notices, []);
   await f.tools.get("magic_sandbox_list").execute("tool-id", {});
   assert.deepEqual(f.calls().at(-1), ["--local","mcp","call","sandbox_list"]);
 });
 
-test("local menu creates a sandbox without model connections, account catalogs, or terminal takeover", async (t) => {
+test("local menu creates managed Pi and attaches its terminal", async (t) => {
   const f = await fixture(t, { local: true });
   await f.command.handler("new", f.ctx);
-  assert.deepEqual(f.calls(), [["pi","account"],["--local","mcp","tools"],["--local","images","list","--format","json"],["--local","mcp","call","sandbox_create"]]);
-  assert.deepEqual(f.terminalEvents, []);
-  assert.match(f.notices[0].message, /Created sandbox/);
+  assert.deepEqual(f.calls(), [["pi","account"],["--local","mcp","tools"],["--local","pi","catalog"],["--local","images","list","--format","json"],["--local","pi","local-create","--provider","modal","--model",model.id],["--local","pi","attach",workspace.id]]);
+  assert.ok(f.terminalEvents.includes("stop"));
+  assert.ok(f.terminalEvents.includes("start"));
 });
 
-test("View computers lists local sandboxes from the local menu", async (t) => {
+test("View computers lists local managed sessions", async (t) => {
   const f = await fixture(t, { local: true, workspaces: [workspace] });
   f.choices.push(1);
   await f.command.handler("", f.ctx);
-  assert.deepEqual(f.menus[0].items, ["New sandbox", "View computers"]);
-  assert.deepEqual(f.menus[1].items, [`${workspace.id} · running`]);
-  assert.deepEqual(f.calls().at(-1), ["--local", "mcp", "call", "sandbox_list"]);
+  assert.deepEqual(f.menus[0].items, ["New computer", "View computers", "Default model"]);
+  assert.deepEqual(f.menus[1].items, [`${workspace.id} · exe · running`]);
+  assert.deepEqual(f.calls().at(-1), ["--local", "pi", "list"]);
 });
 
-test("local inference selection directs users to Pi's model picker without a Cloud login", async (t) => {
+test("local default provisions the chosen provider model without a Cloud login", async (t) => {
   const f = await fixture(t, { local: true });
-  await f.command.handler("inference", f.ctx);
-  assert.deepEqual(f.calls(), [["pi","account"],["--local","mcp","tools"]]);
-  assert.deepEqual(f.notices, [{ message:"Choose your Pi model with /model. Pi uses your existing provider login.", type:"info" }]);
+  f.choices.push(0);
+  await f.command.handler("default", f.ctx);
+  assert.deepEqual(f.calls().slice(-2), [["--local","pi","catalog"],["--local","pi","defaults","--model",model.id]]);
+  assert.match(f.notices.at(-1).message,/Default model: Model/);
 });
 
 test("mode changes disable local tools only when the CLI selects Cloud again", async (t) => {

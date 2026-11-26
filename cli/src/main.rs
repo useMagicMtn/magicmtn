@@ -237,10 +237,10 @@ enum ServerCommands {
 enum ProviderCommands {
     /// Remove all locally installed versions of a provider
     Uninstall { name: String },
-    /// Install a provider from the MagicMtn Registry or a local package
+    /// Install providers from the MagicMtn Registry or one local package
     Install {
-        #[arg(required_unless_present = "file", conflicts_with = "file")]
-        name: Option<String>,
+        #[arg(num_args = 1.., required_unless_present = "file", conflicts_with = "file", value_name = "NAME")]
+        names: Vec<String>,
         /// Install a local provider package instead of downloading from the Registry
         #[arg(long, value_name = "PACKAGE")]
         file: Option<PathBuf>,
@@ -807,11 +807,10 @@ async fn run(mut cli: Cli) -> Result<()> {
     }
     if let Commands::Provider { command } = &command {
         match command {
-            ProviderCommands::Install { name, file } => {
-                return match (name.as_deref(), file.as_deref()) {
-                    (Some(name), None) => provider_registry::install(name).await,
-                    (None, Some(file)) => provider_registry::install_file(file).await,
-                    _ => unreachable!("provider install requires exactly one package source"),
+            ProviderCommands::Install { names, file } => {
+                return match file.as_deref() {
+                    Some(file) => provider_registry::install_file(file).await,
+                    None => provider_registry::install(names).await,
                 }
             }
             ProviderCommands::Uninstall { name } => {
@@ -1131,20 +1130,43 @@ fn provider_install_accepts_one_source_and_rejects_the_retired_command() {
     assert!(matches!(
         cli.command,
         Some(Commands::Provider {
-            command: ProviderCommands::Install { name: Some(name), file: None }
-        }) if name == "apple-container"
+            command: ProviderCommands::Install { names, file: None }
+        }) if names == ["apple-container"]
     ));
+    let cli =
+        Cli::try_parse_from(["magic", "provider", "install", "modal", "apple-container"]).unwrap();
+    assert!(matches!(cli.command, Some(Commands::Provider {
+        command: ProviderCommands::Install { names, file: None }
+    }) if names == ["modal", "apple-container"]));
     let cli =
         Cli::try_parse_from(["magic", "provider", "install", "--file", "provider.tar.gz"]).unwrap();
     assert!(matches!(
         cli.command,
         Some(Commands::Provider {
-            command: ProviderCommands::Install { name: None, file: Some(file) }
-        }) if file == Path::new("provider.tar.gz")
+            command: ProviderCommands::Install { names, file: Some(file) }
+        }) if names.is_empty() && file == Path::new("provider.tar.gz")
     ));
     for args in [
         vec!["magic", "provider", "install"],
         vec!["magic", "provider", "install", "--file"],
+        vec![
+            "magic",
+            "provider",
+            "install",
+            "modal",
+            "apple-container",
+            "--file",
+            "provider.tar.gz",
+        ],
+        vec![
+            "magic",
+            "provider",
+            "install",
+            "--file",
+            "provider.tar.gz",
+            "modal",
+            "apple-container",
+        ],
         vec![
             "magic",
             "provider",

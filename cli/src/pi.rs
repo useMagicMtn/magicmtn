@@ -52,6 +52,16 @@ pub enum Commands {
         #[arg(long, value_name = "UUID")]
         idempotency_key: Option<Uuid>,
     },
+    /// Create a managed local Pi session using the prepared default image
+    #[command(hide = true)]
+    LocalCreate {
+        #[arg(long)]
+        provider: String,
+        #[arg(long)]
+        model: Option<Uuid>,
+        #[arg(long)]
+        idempotency_key: Option<Uuid>,
+    },
     /// Connect an API-key Pi model to the trusted gateway; read JSON on stdin
     #[command(hide = true)]
     Connect,
@@ -91,6 +101,7 @@ impl Commands {
             Self::Defaults { .. } => "defaults",
             Self::List => "list",
             Self::Create { .. } => "create",
+            Self::LocalCreate { .. } => "create",
             Self::Connect => "connect",
             Self::Connections => "connections",
             Self::Disconnect { .. } => "disconnect",
@@ -148,7 +159,7 @@ fn write_extension(directory: &std::path::Path, executable: &std::path::Path) ->
 }
 pub async fn run(api: &Api, command: Commands) -> Result<()> {
     if api.local && !matches!(&command, Commands::Account | Commands::Install) {
-        bail!("Use /magic in Pi to manage local sandboxes and /model to select Pi inference");
+        return run_local(api, command).await;
     }
     let result = match command {
         Commands::Account => crate::authentication::account(api).await?,
@@ -202,6 +213,7 @@ pub async fn run(api: &Api, command: Commands) -> Result<()> {
             )
             .await?
         }
+        Commands::LocalCreate { .. } => bail!("local-create requires local mode"),
         Commands::Connect => {
             let mut input = String::new();
             std::io::stdin().take(32769).read_to_string(&mut input)?;
@@ -282,6 +294,27 @@ pub async fn run(api: &Api, command: Commands) -> Result<()> {
             );
             json!({"reported":true})
         }
+    };
+    println!("{}", serde_json::to_string(&result)?);
+    Ok(())
+}
+
+async fn run_local(api: &Api, command: Commands) -> Result<()> {
+    let result = match command {
+        Commands::Catalog => api.request(Method::GET, "v1/pi/catalog", None).await?,
+        Commands::Defaults { model: Some(model), use_pi: false } => api.request(Method::POST, "v1/pi/defaults", Some(json!({"model_id":model}))).await?,
+        Commands::List => api.request(Method::GET, "v1/pi/workspaces", None).await?,
+        Commands::LocalCreate { provider, model, idempotency_key } => {
+            let id = idempotency_key.unwrap_or_else(Uuid::new_v4);
+            eprintln!("Creating local Pi session {id}");
+            api.request(Method::POST, "v1/pi/workspaces", Some(json!({"provider":provider,"model_id":model,"idempotency_key":id}))).await?
+        }
+        Commands::Status { id } => api.request(Method::GET, &format!("v1/pi/workspaces/{id}/session"), None).await?,
+        Commands::Stop { id } => api.request(Method::POST, &format!("v1/pi/workspaces/{id}/stop"), Some(json!({}))).await?,
+        Commands::Restart { id } => api.request(Method::POST, &format!("v1/pi/workspaces/{id}/restart"), Some(json!({}))).await?,
+        Commands::Terminate { id } => api.request(Method::POST, &format!("v1/pi/workspaces/{id}/terminate"), Some(json!({}))).await?,
+        Commands::Attach { id } => return attach(api, id).await,
+        _ => bail!("use /magic default to choose local inference and /magic new to choose the sandbox backend"),
     };
     println!("{}", serde_json::to_string(&result)?);
     Ok(())

@@ -2,39 +2,64 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { localMenu } from "../local.js";
 
-test("new selects prepared custom images and passes image and provider to creation", async () => {
-  const calls = [];
-  const request = async (args, _signal, body) => {
-    calls.push({ args, body });
-    if (args[1] === "images") return { images: [
-      { name: "canonical", is_default: true, preparations: [{ provider: "modal", ready: false }] },
-      { name: "my-dev", preparations: [{ provider: "modal", ready: true }] },
-    ] };
-    return { content: [{ text: JSON.stringify({ id: "sandbox-id" }) }] };
-  };
-  const notices = [];
-  const ctx = { ui: { notify: (message) => notices.push(message), select: () => assert.fail("one ready selection needs no picker") } };
-  await localMenu("new", ctx, request, () => assert.fail("no terminal takeover"));
-  assert.deepEqual(calls[0].args, ["--local", "images", "list", "--format", "json"]);
-  assert.deepEqual(calls[1].body, { image: "my-dev", provider: "modal" });
-  assert.match(notices[0], /Created sandbox sandbox-id/);
-});
+const model = { id: "model-id", display_name: "Chosen model", provider: "modal" };
+const catalog = { models: [model], defaults: { model_id: model.id } };
 
-test("new explains how to prepare an image without creating a sandbox", async () => {
-  const calls = [];
-  const notices = [];
-  const request = async (args) => { calls.push(args); return { images: [{ name: "canonical", preparations: [] }] }; };
-  await localMenu("new", { ui: { notify: (message) => notices.push(message) } }, request);
-  assert.equal(calls.length, 1);
-  assert.match(notices[0], /images prepare canonical --provider/);
-});
-
-test("cancelling image selection performs no sandbox creation", async () => {
-  const calls = [];
+test("new asks only for backend and attaches managed Pi using the prepared default image", async () => {
+  const calls = [], terminals = [], menus = [];
   const request = async (args) => {
     calls.push(args);
-    return { images: [{ name: "canonical", preparations: [{ provider: "modal", ready: true }, { provider: "apple-container", ready: true }] }] };
+    if (args[2] === "catalog") return catalog;
+    if (args[1] === "images") return { images: [
+      { name: "canonical", is_default: true, preparations: [{ provider: "modal", ready: true }, { provider: "apple-container", ready: true }] },
+      { name: "custom", preparations: [{ provider: "custom-backend", ready: true }] },
+    ] };
+    return { id: "session-id" };
   };
-  await localMenu("new", { ui: { select: async () => undefined } }, request);
-  assert.equal(calls.length, 1);
+  const ctx = { ui: { select: async (title, items) => { menus.push({title,items}); return "apple-container"; } } };
+  await localMenu("new", ctx, request, async (_ctx,args) => terminals.push(args));
+  assert.deepEqual(menus, [{title:"Sandbox backend",items:["modal","apple-container"]}]);
+  assert.deepEqual(calls.at(-1), ["--local","pi","local-create","--provider","apple-container","--model","model-id"]);
+  assert.deepEqual(terminals, [["--local","pi","attach","session-id"]]);
+});
+
+test("default selects and provisions the user's model without selecting one automatically", async () => {
+  const calls = [];
+  const request = async (args) => { calls.push(args); return args[2] === "catalog" ? catalog : {saved:true}; };
+  const notices = [];
+  await localMenu("default", {ui:{select:async (_title,items) => items[0],notify:(message) => notices.push(message)}}, request);
+  assert.deepEqual(calls.at(-1),["--local","pi","defaults","--model","model-id"]);
+  assert.match(notices.at(-1),/Default model: Chosen model/);
+  calls.length=0;
+  await localMenu("default", {ui:{select:async () => undefined}}, request);
+  assert.equal(calls.length,1);
+});
+
+test("new requires preparation of the default and ignores prepared custom images", async () => {
+  const calls = [], notices = [];
+  const request = async (args) => {
+    calls.push(args);
+    if (args[2]==="catalog") return catalog;
+    return {images:[{name:"canonical",is_default:true,preparations:[]},{name:"custom",preparations:[{provider:"modal",ready:true}]}]};
+  };
+  await localMenu("new", {ui:{notify:(message) => notices.push(message)}},request,() => assert.fail("no attach"));
+  assert.equal(calls.length,2);
+  assert.match(notices[0],/images prepare canonical --provider/);
+});
+
+test("view resumes a stopped session with its saved conversation", async () => {
+  const calls=[],terminals=[];
+  const session={id:"session-id",status:"stopped",provider:"modal",desired:"stopped"};
+  const request=async (args) => {calls.push(args);return args[2]==="list" ? {workspaces:[session]} : session;};
+  const choices=["session-id · modal · stopped","Resume"];
+  await localMenu("view",{ui:{select:async () => choices.shift()}},request,async (_ctx,args) => terminals.push(args));
+  assert.deepEqual(calls.slice(1),[["--local","pi","status","session-id"],["--local","pi","restart","session-id"]]);
+  assert.deepEqual(terminals,[["--local","pi","attach","session-id"]]);
+});
+
+test("cancelling backend selection creates nothing", async () => {
+  const calls=[];
+  const request=async (args) => {calls.push(args);return args[2]==="catalog" ? catalog : {images:[{is_default:true,preparations:[{provider:"modal",ready:true},{provider:"apple-container",ready:true}]}]};};
+  await localMenu("new",{ui:{select:async () => undefined}},request);
+  assert.equal(calls.length,2);
 });

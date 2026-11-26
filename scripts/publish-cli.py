@@ -26,8 +26,8 @@ def prepare(artifacts, output, channel):
             raise ValueError("Missing or empty artifact: " + str(binary))
         hashes[platform] = hashlib.sha256(binary.read_bytes()).hexdigest()
     identifier = version
-    source = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
-    dirty = bool(subprocess.check_output(["git", "diff", "HEAD"], cwd=ROOT))
+    source = subprocess.check_output(["jj", "log", "-r", "@-", "--no-graph", "-T", "commit_id"], cwd=ROOT, text=True).strip()
+    dirty = bool(subprocess.check_output(["jj", "diff", "--summary", "-r", "@"], cwd=ROOT))
     manifest = {"release": identifier, "version": version, "channel": channel, "published_at": datetime.datetime.now(datetime.timezone.utc).isoformat(), "platforms": hashes, "source_commit": source, "source_dirty": dirty}
     if dirty:
         raise ValueError("Commit CLI source changes before publishing")

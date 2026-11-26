@@ -27,6 +27,7 @@ pub(crate) struct LocalCredentials {
     registry: Registry,
     key: Arc<aead::LessSafeKey>,
     writes: Arc<Mutex<()>>,
+    state_directory: std::path::PathBuf,
 }
 
 #[derive(sqlx::FromRow)]
@@ -65,6 +66,7 @@ impl LocalCredentials {
             registry,
             key: Arc::new(key),
             writes: Default::default(),
+            state_directory: directory.canonicalize()?.join("provider-state"),
         };
         for mut row in rows {
             let id = Uuid::parse_str(&row.connection_id)?;
@@ -147,9 +149,24 @@ impl LocalCredentials {
         };
         let mut setup_configuration = None;
         let account = if let Some(options) = options {
+            let mut options = options.clone();
+            if binding
+                .manifest
+                .capabilities
+                .setup
+                .as_ref()
+                .is_some_and(|setup| setup.options.contains_key("state_directory"))
+            {
+                options.entry("state_directory".into()).or_insert_with(|| {
+                    self.state_directory
+                        .join(binding.connection_id.to_string())
+                        .to_string_lossy()
+                        .into_owned()
+                });
+            }
             let connection = self
                 .registry
-                .configure_credential(&binding.pin, &environment, &values, options)
+                .configure_credential(&binding.pin, &environment, &values, &options)
                 .await?;
             setup_configuration = Some(connection.configuration.clone());
             binding.configuration.extend(connection.configuration);
@@ -424,7 +441,14 @@ mod tests {
                     SandboxOperation::Terminate,
                 ]);
                 capabilities.setup = Some(magicmtn_sdk::provider_setup::SetupSpec {
-                    options: Default::default(),
+                    options: [(
+                        "state_directory".into(),
+                        magicmtn_sdk::provider_setup::ConfigurationOption {
+                            description: "Persistent provider state".into(),
+                            default: None,
+                        },
+                    )]
+                    .into(),
                 });
                 capabilities
             },
@@ -449,13 +473,15 @@ id=1
 while IFS= read -r frame; do
     id=$((id+1))
     case "$frame" in
-      *'"name":"provider_configure"'*) printf 'setup\n' >> '__SETUP_LOG__'; reply "$id" '{"kind":"configured_connection","value":{"account":"'"$account"'","configuration":{"MAGICMTN_FIXTURE_APP_ID":"app-a"}}}' ;;
+      *'"name":"provider_configure"'*)
+        case "$frame" in *'"state_directory":"__STATE_ROOT__/'*) ;; *) exit 1 ;; esac
+        printf 'setup\n' >> '__SETUP_LOG__'; reply "$id" '{"kind":"configured_connection","value":{"account":"'"$account"'","configuration":{"MAGICMTN_FIXTURE_APP_ID":"app-a"}}}' ;;
       *'"name":"sandbox_create"'*) reply "$id" '{"kind":"sandbox","value":{"provider_id":"account-a-sandbox","status":"running","create_time_ms":null,"metadata":null}}' ;;
       *'"name":"sandbox_exec_bounded"'*) reply "$id" '{"kind":"exec","value":{"stdout":"'"$version"'","stderr":"","exit_code":0,"elapsed_ms":0,"timed_out":false,"truncated":false}}' ;;
       *) exit 1 ;;
     esac
 done
-"#.replace("__MANIFEST__", &json!({"kind":"description", "value":manifest}).to_string()).replace("__SETUP_LOG__", root.join("setup-calls").to_str().unwrap());
+"#.replace("__MANIFEST__", &json!({"kind":"description", "value":manifest}).to_string()).replace("__SETUP_LOG__", root.join("setup-calls").to_str().unwrap()).replace("__STATE_ROOT__", root.canonicalize().unwrap().join("provider-state").to_str().unwrap());
         let digest = hex::encode(digest(&SHA256, script.as_bytes()));
         let package = json!({"name":"fixture","version":"1.0.0","protocol_version":2,
             "os":std::env::consts::OS,"arch":std::env::consts::ARCH,"sha256":digest});

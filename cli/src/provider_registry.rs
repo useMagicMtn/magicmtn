@@ -134,8 +134,31 @@ fn verify_package(bytes: &[u8], name: &str, version: &str, artifact: &Artifact) 
     );
     Ok(())
 }
-pub(crate) async fn install(name: &str) -> Result<()> {
-    ensure!(valid_name(name), "invalid provider name");
+fn select_many<'a>(
+    index: &'a Index,
+    names: &[String],
+    platform: &str,
+) -> Result<Vec<(&'a Provider, &'a Artifact)>> {
+    ensure!(!names.is_empty(), "provide at least one provider name");
+    let mut seen = HashSet::new();
+    let mut selected = Vec::new();
+    for name in names {
+        ensure!(valid_name(name), "invalid provider name");
+        if seen.insert(name) {
+            selected.push(
+                select(index, name, platform)
+                    .with_context(|| format!("selecting provider {name}"))?,
+            );
+        }
+    }
+    Ok(selected)
+}
+
+pub(crate) async fn install(names: &[String]) -> Result<()> {
+    ensure!(
+        !names.is_empty() && names.iter().all(|name| valid_name(name)),
+        "provide valid provider names"
+    );
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(120))
@@ -144,15 +167,26 @@ pub(crate) async fn install(name: &str) -> Result<()> {
         &download(&client, &format!("{ORIGIN}/index.json"), 1024 * 1024).await?,
     )?;
     let platform = format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH);
-    let (provider, artifact) = select(&index, name, &platform)?;
-    let url = format!(
-        "{ORIGIN}/providers/{name}/{}/{}.tar.gz",
-        provider.version, platform
-    );
-    let bytes = download(&client, &url, 320 * 1024 * 1024).await.context(
-        "downloading the current Registry release; retry installation if a release changed",
-    )?;
-    install_package(&bytes, Some((provider, artifact))).await
+    // Resolve the entire request before activating any provider.
+    let selected = select_many(&index, names, &platform)?;
+    for (provider, artifact) in selected {
+        let url = format!(
+            "{ORIGIN}/providers/{}/{}/{}.tar.gz",
+            provider.name, provider.version, platform
+        );
+        let bytes = download(&client, &url, 320 * 1024 * 1024)
+            .await
+            .with_context(|| {
+                format!(
+                    "downloading provider {}; retry installation if its Registry release changed",
+                    provider.name
+                )
+            })?;
+        install_package(&bytes, Some((provider, artifact)))
+            .await
+            .with_context(|| format!("installing provider {}", provider.name))?;
+    }
+    Ok(())
 }
 
 pub(crate) async fn install_file(file: &Path) -> Result<()> {
@@ -358,6 +392,34 @@ mod tests {
         index.providers.push(fixture().providers.remove(0));
         assert!(select(&index, "apple-container", "macos-aarch64").is_err());
     }
+    #[test]
+    fn batch_selection_preserves_order_deduplicates_and_requires_every_provider() {
+        let mut index = fixture();
+        index.providers.push(Provider {
+            name: "modal".into(),
+            description: "Inference and sandboxes".into(),
+            version: "0.3.0".into(),
+            platforms: fixture().providers.remove(0).platforms,
+        });
+        let names = ["modal", "apple-container", "modal"].map(String::from);
+        let selected = select_many(&index, &names, "macos-aarch64").unwrap();
+        assert_eq!(
+            selected
+                .iter()
+                .map(|(provider, _)| provider.name.as_str())
+                .collect::<Vec<_>>(),
+            ["modal", "apple-container"]
+        );
+        for names in [
+            vec![],
+            vec!["modal".into(), "missing".into()],
+            vec!["modal".into(), "../invalid".into()],
+        ] {
+            assert!(select_many(&index, &names, "macos-aarch64").is_err());
+        }
+        assert!(select_many(&index, &names, "linux-x86_64").is_err());
+    }
+
     #[test]
     fn checksums_and_names_fail_closed() {
         assert!(checksum(b"changed", &format!("{:x}", Sha256::digest(b"original"))).is_err());

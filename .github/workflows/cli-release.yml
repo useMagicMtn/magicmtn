@@ -82,6 +82,10 @@ jobs:
           role-to-assume: ${{ vars.CLI_RELEASE_AWS_ROLE_ARN }}
           aws-region: us-east-2
       - run: sh scripts/package-cli.sh
+      - name: Prepare Jujutsu release metadata
+        run: |
+          cargo install --locked jj-cli --version 0.47.1
+          jj git init --colocate
       - name: Publish binaries and checksums
         env:
           RELEASE_CHANNEL: ${{ inputs.channel }}

@@ -21,6 +21,7 @@ use std::sync::{Arc, LazyLock};
 
 mod dashboard;
 pub mod images;
+mod pi;
 mod provider_credentials;
 mod shell;
 mod templates;
@@ -307,6 +308,7 @@ pub async fn run_with_ready(options: Options, ready: impl FnOnce() -> Result<()>
         authenticate,
     ));
     let image_routes = images::router(database.clone(), registry.clone());
+    let pi = pi::Service::new(database.clone(), registry.clone(), options.ttl_seconds);
     let api_stop = stop.clone();
     let app = router(
         store.clone(),
@@ -314,6 +316,10 @@ pub async fn run_with_ready(options: Options, ready: impl FnOnce() -> Result<()>
         info.token.clone(),
         options.ttl_seconds,
     )
+    .merge(pi.clone().router().layer(middleware::from_fn_with_state(
+        Arc::new(info.token.clone()),
+        authenticate,
+    )))
     .merge(credential_routes)
     .merge(image_routes.layer(middleware::from_fn_with_state(
         Arc::new(info.token.clone()),
@@ -339,6 +345,7 @@ pub async fn run_with_ready(options: Options, ready: impl FnOnce() -> Result<()>
         registry.clone(),
     ));
     let templates = tokio::spawn(templates::run(database.clone(), registry.clone()));
+    let pi_worker = tokio::spawn(pi.run());
     eprintln!("MagicMtn local server listening on {}", info.url);
     eprintln!("MagicMtn web UI listening on http://{ui_address}");
     if std::io::stderr().is_terminal() {
@@ -363,6 +370,8 @@ pub async fn run_with_ready(options: Options, ready: impl FnOnce() -> Result<()>
     });
     let result = tokio::try_join!(async { api.await }, async { ui.await });
     signal.abort();
+    pi_worker.abort();
+    let _ = pi_worker.await;
     templates.abort();
     let _ = templates.await;
     worker.abort();

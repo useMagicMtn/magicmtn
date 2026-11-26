@@ -108,6 +108,11 @@ impl Database {
                 .fetch_all(&self.pool)
                 .await?;
         bindings.extend(sqlx::query_scalar::<_,Value>("SELECT json_extract(record,'$.metadata._magicmtn_connection') FROM sandboxes WHERE status<>'ended'").fetch_all(&self.pool).await?);
+        bindings.extend(
+            sqlx::query_scalar::<_, Value>("SELECT binding FROM local_models")
+                .fetch_all(&self.pool)
+                .await?,
+        );
         for value in bindings {
             let binding: Binding = serde_json::from_value(value)?;
             let installed = registry.installed_pin(&binding.pin)?;
