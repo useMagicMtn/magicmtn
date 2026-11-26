@@ -8,6 +8,7 @@ interfaces/*
 .cargo
 .venv
 **/target
+**/.docusaurus
 **/node_modules
 **/__pycache__
 **/*.pyc

@@ -1,0 +1,109 @@
+:root {
+  --ifm-color-primary: #316747;
+  --ifm-color-primary-dark: #2c5d40;
+  --ifm-color-primary-darker: #2a583c;
+  --ifm-color-primary-darkest: #224832;
+  --ifm-color-primary-light: #36714e;
+  --ifm-color-primary-lighter: #387652;
+  --ifm-color-primary-lightest: #40865c;
+}
+[data-theme='dark'] {
+  --ifm-color-primary: #8ccca3;
+  --ifm-color-primary-dark: #73c18f;
+  --ifm-color-primary-darker: #66bb85;
+  --ifm-color-primary-darkest: #48a468;
+  --ifm-color-primary-light: #a5d7b7;
+  --ifm-color-primary-lighter: #b2ddc1;
+  --ifm-color-primary-lightest: #d8eede;
+}
+
+.theme-doc-sidebar-menu {
+  padding-right: 0.75rem;
+}
+
+.theme-doc-sidebar-menu .menu__link {
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
+.docs-sidebar-search {
+  padding: 1rem 0.75rem 0.5rem;
+}
+
+.docs-sidebar-search .navbar__search,
+.docs-sidebar-search .algolia-autocomplete,
+.docs-sidebar-search .navbar__search-input {
+  width: 100%;
+}
+
+@media (min-width: 997px) {
+  .theme-doc-sidebar-container {
+    clip-path: none !important;
+    z-index: 2;
+  }
+}
+
+.docs-sidebar-search .navbar__search {
+  margin: 0;
+}
+
+.theme-code-block .docs-copy-button {
+  opacity: 1 !important;
+}
+
+.theme-code-block pre code {
+  padding-right: 3.5rem;
+}
+
+.footer__copyright a {
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+
+.pi-recording {
+  margin: 1rem 0 2rem;
+}
+
+.theme-doc-footer-edit-meta-row {
+  display: block;
+}
+
+.theme-doc-footer-edit-meta-row > .col {
+  max-width: 100%;
+}
+
+.docs-source-link {
+  display: flex;
+  align-items: center;
+  gap: 0.875rem;
+  width: 100%;
+  padding: 1.5rem;
+  border: 1px solid var(--ifm-color-emphasis-500);
+  color: var(--ifm-font-color-base);
+  line-height: 1.5;
+}
+
+.docs-source-link:hover {
+  border-color: var(--ifm-font-color-base);
+  color: var(--ifm-font-color-base);
+}
+
+.docs-source-link svg {
+  flex-shrink: 0;
+}
+
+.docs-source-link span {
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+
+.docs-source-link:focus-visible {
+  outline: 2px solid var(--ifm-color-primary);
+  outline-offset: 3px;
+}
+
+@media (max-width: 576px) {
+  .docs-source-link {
+    padding: 1rem;
+  }
+}

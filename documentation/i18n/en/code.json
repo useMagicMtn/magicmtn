@@ -1,0 +1,10 @@
+{
+  "theme.SearchBar.label": {
+    "message": "Search docs",
+    "description": "Placeholder for the documentation search field"
+  },
+  "theme.common.editThisPage": {
+    "message": "View this page on GitHub",
+    "description": "Link to the documentation source in the MagicMtn repository"
+  }
+}
