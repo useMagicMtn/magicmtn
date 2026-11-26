@@ -7,6 +7,8 @@ publish = false
 description = "Single-user local assembly of the MagicMtn engine"
 
 [dependencies]
+base64 = "0.22"
+magicmtn-web-ui = { path = "../web-ui" }
 magicmtn-sdk = { path = "../sdk/rust/magicmtn-sdk" }
 magicmtn-engine = { path = "../core", features = ["sqlite"] }
 magicmtn-provider-framework = { path = "../sdk/rust/magicmtn-provider-framework", features = ["host"] }

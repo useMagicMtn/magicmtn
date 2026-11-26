@@ -22,8 +22,8 @@ impl Drop for Server {
     }
 }
 
-#[test]
-fn running_server_blocks_login_and_stop_releases_locks() {
+#[tokio::test]
+async fn running_server_blocks_login_and_stop_releases_locks() {
     let home = tempfile::tempdir().unwrap();
     let directory = home.path().join(".config/magicmtn/local");
     let credentials = home.path().join(".config/magicmtn/cli");
@@ -35,22 +35,131 @@ fn running_server_blocks_login_and_stop_releases_locks() {
         serde_json::json!({"server":developer,"token":"developer-session"}).to_string(),
     )
     .unwrap();
+    let log = home.path().join("server.log");
     let mut server = Server(
         magic(home.path())
-            .args(["server", "start", "--bind", "127.0.0.1:0"])
+            .args([
+                "server",
+                "start",
+                "--bind",
+                "127.0.0.1:0",
+                "--ui-bind",
+                "127.0.0.1:0",
+            ])
             .stdout(Stdio::null())
-            .stderr(Stdio::piped())
+            .stderr(File::create(&log).unwrap())
             .spawn()
             .unwrap(),
     );
     let deadline = Instant::now() + Duration::from_secs(20);
-    while !directory.join("connection.json").exists() {
+    while !fs::read_to_string(&log).unwrap().contains("Password file:") {
         assert!(
             server.0.try_wait().unwrap().is_none(),
             "server exited during startup"
         );
         assert!(Instant::now() < deadline, "server startup timed out");
         std::thread::sleep(Duration::from_millis(25));
+    }
+    let startup = fs::read_to_string(&log).unwrap();
+    let ui = startup
+        .lines()
+        .find_map(|line| line.strip_prefix("MagicMtn web UI listening on "))
+        .unwrap();
+    let entry = startup
+        .lines()
+        .find_map(|line| line.strip_prefix("Dashboard username: magic  Password file: "))
+        .unwrap();
+    let password = fs::read_to_string(entry).unwrap();
+    let client = reqwest::Client::new();
+    let catalog = format!("{ui}/compute/images");
+    assert_eq!(client.get(&catalog).send().await.unwrap().status(), 401);
+    let html = client
+        .get(&catalog)
+        .basic_auth("magic", Some(password.trim()))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(html.contains("canonical"));
+    for (path, marker) in [
+        ("/compute/computers", "<h1>Computers</h1>"),
+        ("/providers", "Installed releases"),
+        ("/templates", "template-toml"),
+        ("/mcp", "mcp-add-sentry"),
+    ] {
+        assert!(html.contains(&format!("href=\"{path}\"")));
+        let page = client
+            .get(format!("{ui}{path}"))
+            .basic_auth("magic", Some(password.trim()))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .text()
+            .await
+            .unwrap();
+        assert!(page.contains(marker), "{path}");
+    }
+    let save_url = format!("{ui}/api/templates/default");
+    let template = serde_json::json!({"toml": "name='default'\ndescription='Test workspace'\n[repos]\ngithub=['example/project']"});
+    assert_eq!(
+        client
+            .put(&save_url)
+            .json(&template)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        401
+    );
+    client
+        .put(&save_url)
+        .basic_auth("magic", Some(password.trim()))
+        .json(&template)
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+    let invalid = serde_json::json!({"toml": "name='unavailable'"});
+    assert_eq!(
+        client
+            .put(&save_url)
+            .basic_auth("magic", Some(password.trim()))
+            .json(&invalid)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        422
+    );
+    let saved = client
+        .get(format!("{ui}/templates"))
+        .basic_auth("magic", Some(password.trim()))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(saved.contains("Test workspace") && saved.contains("example/project"));
+    for path in ["/billing", "/account", "/usage", "/registry"] {
+        assert!(!html.contains(&format!("href=\"{path}\"")));
+        assert_eq!(
+            client
+                .get(format!("{ui}{path}"))
+                .basic_auth("magic", Some(password.trim()))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            404
+        );
     }
     assert!(magicmtn_local::is_running(&directory).unwrap());
     let account = magic(home.path()).args(["pi", "account"]).output().unwrap();
@@ -100,6 +209,7 @@ fn running_server_blocks_login_and_stop_releases_locks() {
         String::from_utf8_lossy(&stop.stderr)
     );
     server.0.wait().unwrap();
+    assert!(client.get(&catalog).send().await.is_err());
     assert!(!magicmtn_local::is_running(&directory).unwrap());
     assert!(directory.join("connection.json").exists());
     let account = magic(home.path()).args(["pi", "account"]).output().unwrap();
@@ -278,7 +388,14 @@ done
     run(&["provider", "install", "--file", path.to_str().unwrap()]);
     let mut server = Server(
         magic(home.path())
-            .args(["server", "start", "--bind", "127.0.0.1:0"])
+            .args([
+                "server",
+                "start",
+                "--bind",
+                "127.0.0.1:0",
+                "--ui-bind",
+                "127.0.0.1:0",
+            ])
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .spawn()
@@ -331,4 +448,27 @@ done
         .is_file());
     run(&["server", "stop"]);
     assert!(server.0.wait().unwrap().success());
+}
+
+#[test]
+fn occupied_dashboard_port_prevents_api_startup() {
+    let home = tempfile::tempdir().unwrap();
+    let occupied = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = occupied.local_addr().unwrap().to_string();
+    let output = magic(home.path())
+        .args([
+            "server",
+            "start",
+            "--bind",
+            "127.0.0.1:0",
+            "--ui-bind",
+            &address,
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("binding dashboard"));
+    let config = home.path().join(".config/magicmtn");
+    assert!(!config.join("local/connection.json").exists());
+    assert!(!config.join("cli/selection.json").exists());
 }

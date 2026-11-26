@@ -12,6 +12,7 @@ COPY Cargo.toml Cargo.lock ./
 COPY release ./release
 COPY cli ./cli
 COPY core ./core
+COPY web-ui ./web-ui
 COPY local ./local
 COPY assets ./assets
 COPY runtime ./runtime

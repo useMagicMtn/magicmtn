@@ -127,7 +127,7 @@ To add `magic` to a NixOS or Home Manager flake configuration, add `github:useMa
 
 On Apple silicon, use Apple Container and the built-in SQLite server to create, execute a command in, and terminate a sandbox. Follow the [local quickstart](docs/local-server.md).
 
-The local server also exposes sandbox tools to Pi and OpenCode. With the local server running, use `magic agents install pi` or `magic agents install opencode`. Start your agent and use `/magic new` and `/magic view` to work with sandboxes.
+Open <http://localhost:1900> to view computers, images, and installed providers. Use Templates to configure GitHub repositories for new computers, and browse available MCP services in the MCP Catalog. The sandbox API listens on port 1924. The local server also exposes sandbox tools to Pi and OpenCode. With the local server running, use `magic agents install pi` or `magic agents install opencode`. Start your agent and use `/magic new` and `/magic view` to work with sandboxes.
 
 ## Connect to hosted MagicMtn
 

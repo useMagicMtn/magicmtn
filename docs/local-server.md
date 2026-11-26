@@ -24,7 +24,9 @@ If you previously signed in to hosted MagicMtn, run `magic logout`. Start the lo
 magic server start
 ```
 
-The server creates `~/.config/magicmtn/local/magicmtn.sqlite3` automatically and listens on `127.0.0.1:1924`. Keep this terminal open. No database service or separate SQLite installation is required.
+The server creates `~/.config/magicmtn/local/magicmtn.sqlite3` automatically and listens on `127.0.0.1:1924`. Open <http://localhost:1900> to view computers, images and their preparation status, and installed providers. In [Templates](http://localhost:1900/templates), save public GitHub repositories as `owner/repo` to clone them into `/workspace` on new computers. Open the [MCP Catalog](http://localhost:1900/mcp) to search services and find connection details for your MCP client. Sign in as `magic` with the dashboard password printed in the terminal. When server output is redirected, read the password from the private file named in the startup message. Keep this terminal open. No database service or separate SQLite installation is required.
+
+To view the dashboard on an internal server, run `ssh -N -L 1900:127.0.0.1:1900 user@server` from your workstation, then open <http://localhost:1900> and use the dashboard credentials from that server.
 
 Starting the server selects local mode for the CLI and Pi extension. Commands use the server address and credential saved in `~/.config/magicmtn/local/connection.json`. Local mode uses your machine and works without a hosted account.
 
@@ -95,6 +97,7 @@ Stop the server before installing or uninstalling providers. Keep provider relea
 | Setting                     | Purpose                                                                                                                  |
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
 | `--network default`         | Give new Apple Container sandboxes internet access. Use `--network none` for an isolated network.                        |
+| `--ui-bind 127.0.0.1:PORT`  | Choose the web dashboard port. The listener must use a loopback address.                                                 |
 | `--bind 127.0.0.1:PORT`     | Choose the local server port. The listener must use a loopback address.                                                  |
 | `MAGICMTN_CONFIG_DIRECTORY` | Change the CLI configuration and installed-provider directory from `~/.config/magicmtn`.                                 |
 | `MAGICMTN_LOCAL_DIRECTORY`  | Override the local server's database, credential, and lock directory. Set it for both the server and local CLI commands. |

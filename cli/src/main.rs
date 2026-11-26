@@ -222,6 +222,9 @@ enum ServerCommands {
     Start {
         #[arg(long, default_value = "127.0.0.1:1924")]
         bind: std::net::SocketAddr,
+        /// Loopback address for the web dashboard
+        #[arg(long, default_value = "127.0.0.1:1900")]
+        ui_bind: std::net::SocketAddr,
         #[arg(long, default_value_t = 86400, value_parser = clap::value_parser!(u32).range(1..=86400))]
         ttl_seconds: u32,
         /// Apple Container network for new sandboxes; use default for internet access
@@ -706,6 +709,7 @@ async fn run(mut cli: Cli) -> Result<()> {
         return match command {
             ServerCommands::Start {
                 bind,
+                ui_bind,
                 ttl_seconds,
                 network,
             } => {
@@ -718,6 +722,7 @@ async fn run(mut cli: Cli) -> Result<()> {
                 magicmtn_local::run_with_ready(
                     magicmtn_local::Options {
                         bind,
+                        ui_bind,
                         ttl_seconds,
                         network,
                         directory: directory.clone(),

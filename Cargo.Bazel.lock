@@ -1,5 +1,5 @@
 {
-  "checksum": "675be536c860ffaf04a61203a68b41edd763a780b936e328442179e3731cc55b",
+  "checksum": "cf90f5657bcd8786da1a3adcf935daf52e70107f4d76ba0406ab0e89cd367288",
   "conditions": {
     "aarch64-apple-darwin": [
       "aarch64-apple-darwin"
@@ -505,6 +505,189 @@
         }
       ],
       "version": "1.0.104"
+    },
+    "askama 0.14.0": {
+      "common_attrs": {
+        "crate_features": [
+          "alloc",
+          "config",
+          "default",
+          "derive",
+          "std",
+          "urlencode"
+        ],
+        "deps": [
+          {
+            "id": "itoa 1.0.18",
+            "target": "itoa"
+          },
+          {
+            "id": "percent-encoding 2.3.2",
+            "target": "percent_encoding"
+          }
+        ],
+        "edition": "2021",
+        "proc_macro_deps": [
+          {
+            "id": "askama_derive 0.14.0",
+            "target": "askama_derive"
+          }
+        ]
+      },
+      "library_target_name": "askama",
+      "license": "MIT OR Apache-2.0",
+      "license_file": "LICENSE-APACHE",
+      "license_ids": [
+        "Apache-2.0",
+        "MIT"
+      ],
+      "name": "askama",
+      "package_url": "https://github.com/askama-rs/askama",
+      "repository": {
+        "Http": {
+          "sha256": "f75363874b771be265f4ffe307ca705ef6f3baa19011c149da8674a87f1b75c4",
+          "url": "https://static.crates.io/crates/askama/0.14.0/download"
+        }
+      },
+      "targets": [
+        {
+          "Library": {
+            "crate_name": "askama",
+            "crate_root": "src/lib.rs"
+          }
+        }
+      ],
+      "version": "0.14.0"
+    },
+    "askama_derive 0.14.0": {
+      "common_attrs": {
+        "crate_features": [
+          "alloc",
+          "config",
+          "default",
+          "derive",
+          "std",
+          "urlencode"
+        ],
+        "deps": [
+          {
+            "alias": "parser",
+            "id": "askama_parser 0.14.0",
+            "target": "askama_parser"
+          },
+          {
+            "id": "basic-toml 0.1.10",
+            "target": "basic_toml"
+          },
+          {
+            "id": "memchr 2.8.3",
+            "target": "memchr"
+          },
+          {
+            "id": "proc-macro2 1.0.107",
+            "target": "proc_macro2"
+          },
+          {
+            "id": "quote 1.0.47",
+            "target": "quote"
+          },
+          {
+            "id": "rustc-hash 2.1.3",
+            "target": "rustc_hash"
+          },
+          {
+            "id": "serde 1.0.229",
+            "target": "serde"
+          },
+          {
+            "id": "syn 2.0.119",
+            "target": "syn"
+          }
+        ],
+        "edition": "2021",
+        "proc_macro_deps": [
+          {
+            "id": "serde_derive 1.0.229",
+            "target": "serde_derive"
+          }
+        ]
+      },
+      "library_target_name": "askama_derive",
+      "license": "MIT OR Apache-2.0",
+      "license_file": "LICENSE-APACHE",
+      "license_ids": [
+        "Apache-2.0",
+        "MIT"
+      ],
+      "name": "askama_derive",
+      "package_url": "https://github.com/askama-rs/askama",
+      "repository": {
+        "Http": {
+          "sha256": "129397200fe83088e8a68407a8e2b1f826cf0086b21ccdb866a722c8bcd3a94f",
+          "url": "https://static.crates.io/crates/askama_derive/0.14.0/download"
+        }
+      },
+      "targets": [
+        {
+          "ProcMacro": {
+            "crate_name": "askama_derive",
+            "crate_root": "src/lib.rs"
+          }
+        }
+      ],
+      "version": "0.14.0"
+    },
+    "askama_parser 0.14.0": {
+      "common_attrs": {
+        "crate_features": [
+          "config"
+        ],
+        "deps": [
+          {
+            "id": "memchr 2.8.3",
+            "target": "memchr"
+          },
+          {
+            "id": "serde 1.0.229",
+            "target": "serde"
+          },
+          {
+            "id": "winnow 0.7.15",
+            "target": "winnow"
+          }
+        ],
+        "edition": "2021",
+        "proc_macro_deps": [
+          {
+            "id": "serde_derive 1.0.229",
+            "target": "serde_derive"
+          }
+        ]
+      },
+      "library_target_name": "askama_parser",
+      "license": "MIT OR Apache-2.0",
+      "license_file": "LICENSE-APACHE",
+      "license_ids": [
+        "Apache-2.0",
+        "MIT"
+      ],
+      "name": "askama_parser",
+      "package_url": "https://github.com/askama-rs/askama",
+      "repository": {
+        "Http": {
+          "sha256": "d6ab5630b3d5eaf232620167977f95eb51f3432fc76852328774afbd242d4358",
+          "url": "https://static.crates.io/crates/askama_parser/0.14.0/download"
+        }
+      },
+      "targets": [
+        {
+          "Library": {
+            "crate_name": "askama_parser",
+            "crate_root": "src/lib.rs"
+          }
+        }
+      ],
+      "version": "0.14.0"
     },
     "async-trait 0.1.92": {
       "common_attrs": {
@@ -1096,6 +1279,41 @@
         }
       ],
       "version": "1.8.3"
+    },
+    "basic-toml 0.1.10": {
+      "common_attrs": {
+        "deps": [
+          {
+            "id": "serde 1.0.229",
+            "target": "serde"
+          }
+        ],
+        "edition": "2021"
+      },
+      "library_target_name": "basic_toml",
+      "license": "MIT OR Apache-2.0",
+      "license_file": "LICENSE-APACHE",
+      "license_ids": [
+        "Apache-2.0",
+        "MIT"
+      ],
+      "name": "basic-toml",
+      "package_url": "https://github.com/dtolnay/basic-toml",
+      "repository": {
+        "Http": {
+          "sha256": "ba62675e8242a4c4e806d12f11d136e626e6c8361d6b829310732241652a178a",
+          "url": "https://static.crates.io/crates/basic-toml/0.1.10/download"
+        }
+      },
+      "targets": [
+        {
+          "Library": {
+            "crate_name": "basic_toml",
+            "crate_root": "src/lib.rs"
+          }
+        }
+      ],
+      "version": "0.1.10"
     },
     "bitflags 2.13.2": {
       "common_attrs": {
@@ -3235,6 +3453,39 @@
       ],
       "version": "0.11.1"
     },
+    "fnv 1.0.7": {
+      "common_attrs": {
+        "crate_features": [
+          "default",
+          "std"
+        ],
+        "edition": "2015"
+      },
+      "library_target_name": "fnv",
+      "license": "Apache-2.0 / MIT",
+      "license_file": "LICENSE-APACHE",
+      "license_ids": [
+        "Apache-2.0",
+        "MIT"
+      ],
+      "name": "fnv",
+      "package_url": "https://github.com/servo/rust-fnv",
+      "repository": {
+        "Http": {
+          "sha256": "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1",
+          "url": "https://static.crates.io/crates/fnv/1.0.7/download"
+        }
+      },
+      "targets": [
+        {
+          "Library": {
+            "crate_name": "fnv",
+            "crate_root": "lib.rs"
+          }
+        }
+      ],
+      "version": "1.0.7"
+    },
     "foldhash 0.1.5": {
       "common_attrs": {
         "edition": "2021"
@@ -3585,6 +3836,11 @@
     },
     "futures-sink 0.3.34": {
       "common_attrs": {
+        "crate_features": [
+          "alloc",
+          "default",
+          "std"
+        ],
         "edition": "2018"
       },
       "library_target_name": "futures_sink",
@@ -3942,6 +4198,80 @@
         }
       ],
       "version": "0.4.3"
+    },
+    "h2 0.4.20": {
+      "common_attrs": {
+        "deps": [
+          {
+            "id": "atomic-waker 1.1.2",
+            "target": "atomic_waker"
+          },
+          {
+            "id": "bytes 1.12.1",
+            "target": "bytes"
+          },
+          {
+            "id": "fnv 1.0.7",
+            "target": "fnv"
+          },
+          {
+            "id": "futures-core 0.3.34",
+            "target": "futures_core"
+          },
+          {
+            "id": "futures-sink 0.3.34",
+            "target": "futures_sink"
+          },
+          {
+            "id": "http 1.5.0",
+            "target": "http"
+          },
+          {
+            "id": "indexmap 2.14.2",
+            "target": "indexmap"
+          },
+          {
+            "id": "slab 0.4.12",
+            "target": "slab"
+          },
+          {
+            "id": "tokio 1.53.2",
+            "target": "tokio"
+          },
+          {
+            "id": "tokio-util 0.7.19",
+            "target": "tokio_util"
+          },
+          {
+            "id": "tracing 0.1.44",
+            "target": "tracing"
+          }
+        ],
+        "edition": "2021"
+      },
+      "library_target_name": "h2",
+      "license": "MIT",
+      "license_file": "LICENSE",
+      "license_ids": [
+        "MIT"
+      ],
+      "name": "h2",
+      "package_url": "https://github.com/hyperium/h2",
+      "repository": {
+        "Http": {
+          "sha256": "7d29020232d6aa3fb1daca64c1127cf662cf97f254ae16c18c05b8ab635fc118",
+          "url": "https://static.crates.io/crates/h2/0.4.20/download"
+        }
+      },
+      "targets": [
+        {
+          "Library": {
+            "crate_name": "h2",
+            "crate_root": "src/lib.rs"
+          }
+        }
+      ],
+      "version": "0.4.20"
     },
     "hashbrown 0.15.5": {
       "common_attrs": {
@@ -4446,6 +4776,7 @@
           "client",
           "default",
           "http1",
+          "http2",
           "server"
         ],
         "deps": [
@@ -4464,6 +4795,10 @@
           {
             "id": "futures-core 0.3.34",
             "target": "futures_core"
+          },
+          {
+            "id": "h2 0.4.20",
+            "target": "h2"
           },
           {
             "id": "http 1.5.0",
@@ -4532,6 +4867,7 @@
       "common_attrs": {
         "crate_features": [
           "http1",
+          "http2",
           "ring",
           "tls12",
           "webpki-roots",
@@ -4607,6 +4943,7 @@
           "client-proxy",
           "default",
           "http1",
+          "http2",
           "server",
           "service",
           "tokio"
@@ -6148,7 +6485,7 @@
       ],
       "version": "0.1.0"
     },
-    "magicmtn-cli 0.1.0": {
+    "magicmtn-cli 3.1.0": {
       "common_attrs": {
         "deps": [
           {
@@ -6243,7 +6580,7 @@
       "name": "magicmtn-cli",
       "repository": null,
       "targets": [],
-      "version": "0.1.0"
+      "version": "3.1.0"
     },
     "magicmtn-contracts 0.1.0": {
       "common_attrs": {
@@ -6318,6 +6655,10 @@
             "target": "axum"
           },
           {
+            "id": "base64 0.22.1",
+            "target": "base64"
+          },
+          {
             "id": "chrono 0.4.45",
             "target": "chrono"
           },
@@ -6354,6 +6695,10 @@
             "target": "tokio"
           },
           {
+            "id": "toml 1.1.8+spec-1.1.0",
+            "target": "toml"
+          },
+          {
             "id": "tracing 0.1.44",
             "target": "tracing"
           },
@@ -6367,10 +6712,6 @@
           }
         ],
         "deps_dev": [
-          {
-            "id": "base64 0.22.1",
-            "target": "base64"
-          },
           {
             "id": "tempfile 3.27.0",
             "target": "tempfile"
@@ -6411,8 +6752,16 @@
             "target": "axum"
           },
           {
+            "id": "base64 0.22.1",
+            "target": "base64"
+          },
+          {
             "id": "hex 0.4.3",
             "target": "hex"
+          },
+          {
+            "id": "reqwest 0.12.28",
+            "target": "reqwest"
           },
           {
             "id": "ring 0.17.14",
@@ -6425,6 +6774,10 @@
           {
             "id": "serde_json 1.0.151",
             "target": "serde_json"
+          },
+          {
+            "id": "sha2 0.10.9",
+            "target": "sha2"
           },
           {
             "id": "sqlx 0.8.6",
@@ -6576,6 +6929,41 @@
         {
           "Library": {
             "crate_name": "magicmtn_sdk",
+            "crate_root": "src/lib.rs"
+          }
+        }
+      ],
+      "version": "0.1.0"
+    },
+    "magicmtn-web-ui 0.1.0": {
+      "common_attrs": {
+        "deps": [
+          {
+            "id": "askama 0.14.0",
+            "target": "askama"
+          },
+          {
+            "id": "axum 0.7.9",
+            "target": "axum"
+          },
+          {
+            "id": "serde 1.0.229",
+            "target": "serde"
+          }
+        ],
+        "edition": "2021"
+      },
+      "library_target_name": "magicmtn_web_ui",
+      "license": "Apache-2.0",
+      "license_ids": [
+        "Apache-2.0"
+      ],
+      "name": "magicmtn-web-ui",
+      "repository": null,
+      "targets": [
+        {
+          "Library": {
+            "crate_name": "magicmtn_web_ui",
             "crate_root": "src/lib.rs"
           }
         }
@@ -8369,6 +8757,8 @@
           "__rustls",
           "__rustls-ring",
           "__tls",
+          "h2",
+          "http2",
           "json",
           "rustls-tls",
           "rustls-tls-webpki-roots",
@@ -8387,6 +8777,10 @@
             {
               "id": "futures-core 0.3.34",
               "target": "futures_core"
+            },
+            {
+              "id": "h2 0.4.20",
+              "target": "h2"
             },
             {
               "id": "http 1.5.0",
@@ -8820,6 +9214,10 @@
     },
     "rustc-hash 2.1.3": {
       "common_attrs": {
+        "crate_features": [
+          "default",
+          "std"
+        ],
         "edition": "2021"
       },
       "library_target_name": "rustc_hash",
@@ -10154,6 +10552,46 @@
       ],
       "version": "0.6.9"
     },
+    "serde_spanned 1.1.2": {
+      "common_attrs": {
+        "crate_features": [
+          "alloc",
+          "serde",
+          "std"
+        ],
+        "deps": [
+          {
+            "id": "serde_core 1.0.229",
+            "target": "serde_core"
+          }
+        ],
+        "edition": "2024"
+      },
+      "library_target_name": "serde_spanned",
+      "license": "MIT OR Apache-2.0",
+      "license_file": "LICENSE-APACHE",
+      "license_ids": [
+        "Apache-2.0",
+        "MIT"
+      ],
+      "name": "serde_spanned",
+      "package_url": "https://github.com/toml-rs/toml",
+      "repository": {
+        "Http": {
+          "sha256": "4e7523beb55eece201a2356bee0bbca0d1ab466c14c07703b2e0ee6d42cb0c2c",
+          "url": "https://static.crates.io/crates/serde_spanned/1.1.2/download"
+        }
+      },
+      "targets": [
+        {
+          "Library": {
+            "crate_name": "serde_spanned",
+            "crate_root": "src/lib.rs"
+          }
+        }
+      ],
+      "version": "1.1.2"
+    },
     "serde_urlencoded 0.7.1": {
       "common_attrs": {
         "deps": [
@@ -10646,6 +11084,7 @@
     "slab 0.4.12": {
       "common_attrs": {
         "crate_features": [
+          "default",
           "std"
         ],
         "edition": "2018"
@@ -12825,6 +13264,66 @@
       ],
       "version": "0.24.0"
     },
+    "tokio-util 0.7.19": {
+      "common_attrs": {
+        "crate_features": [
+          "codec",
+          "default",
+          "io",
+          "libc"
+        ],
+        "deps": [
+          {
+            "id": "bytes 1.12.1",
+            "target": "bytes"
+          },
+          {
+            "id": "futures-core 0.3.34",
+            "target": "futures_core"
+          },
+          {
+            "id": "futures-sink 0.3.34",
+            "target": "futures_sink"
+          },
+          {
+            "id": "libc 0.2.190",
+            "target": "libc"
+          },
+          {
+            "id": "pin-project-lite 0.2.17",
+            "target": "pin_project_lite"
+          },
+          {
+            "id": "tokio 1.53.2",
+            "target": "tokio"
+          }
+        ],
+        "edition": "2021"
+      },
+      "library_target_name": "tokio_util",
+      "license": "MIT",
+      "license_file": "LICENSE",
+      "license_ids": [
+        "MIT"
+      ],
+      "name": "tokio-util",
+      "package_url": "https://github.com/tokio-rs/tokio",
+      "repository": {
+        "Http": {
+          "sha256": "494815d09bf52b5548659851081238f0ca39ff638363907596da739561c62c52",
+          "url": "https://static.crates.io/crates/tokio-util/0.7.19/download"
+        }
+      },
+      "targets": [
+        {
+          "Library": {
+            "crate_name": "tokio_util",
+            "crate_root": "src/lib.rs"
+          }
+        }
+      ],
+      "version": "0.7.19"
+    },
     "toml 0.8.23": {
       "common_attrs": {
         "crate_features": [
@@ -12877,6 +13376,68 @@
       ],
       "version": "0.8.23"
     },
+    "toml 1.1.8+spec-1.1.0": {
+      "common_attrs": {
+        "crate_features": [
+          "default",
+          "display",
+          "parse",
+          "serde",
+          "std"
+        ],
+        "deps": [
+          {
+            "id": "serde_core 1.0.229",
+            "target": "serde_core"
+          },
+          {
+            "id": "serde_spanned 1.1.2",
+            "target": "serde_spanned"
+          },
+          {
+            "id": "toml_datetime 1.1.2+spec-1.1.0",
+            "target": "toml_datetime"
+          },
+          {
+            "id": "toml_parser 1.1.5+spec-1.1.0",
+            "target": "toml_parser"
+          },
+          {
+            "id": "toml_writer 1.1.3+spec-1.1.0",
+            "target": "toml_writer"
+          },
+          {
+            "id": "winnow 1.0.4",
+            "target": "winnow"
+          }
+        ],
+        "edition": "2024"
+      },
+      "library_target_name": "toml",
+      "license": "MIT OR Apache-2.0",
+      "license_file": "LICENSE-APACHE",
+      "license_ids": [
+        "Apache-2.0",
+        "MIT"
+      ],
+      "name": "toml",
+      "package_url": "https://github.com/toml-rs/toml",
+      "repository": {
+        "Http": {
+          "sha256": "20489e00e4d8741d6be680764cc12e270655e375a20d1011e844a9c3379e678d",
+          "url": "https://static.crates.io/crates/toml/1.1.8+spec-1.1.0/download"
+        }
+      },
+      "targets": [
+        {
+          "Library": {
+            "crate_name": "toml",
+            "crate_root": "src/lib.rs"
+          }
+        }
+      ],
+      "version": "1.1.8+spec-1.1.0"
+    },
     "toml_datetime 0.6.11": {
       "common_attrs": {
         "crate_features": [
@@ -12914,6 +13475,46 @@
         }
       ],
       "version": "0.6.11"
+    },
+    "toml_datetime 1.1.2+spec-1.1.0": {
+      "common_attrs": {
+        "crate_features": [
+          "alloc",
+          "serde",
+          "std"
+        ],
+        "deps": [
+          {
+            "id": "serde_core 1.0.229",
+            "target": "serde_core"
+          }
+        ],
+        "edition": "2024"
+      },
+      "library_target_name": "toml_datetime",
+      "license": "MIT OR Apache-2.0",
+      "license_file": "LICENSE-APACHE",
+      "license_ids": [
+        "Apache-2.0",
+        "MIT"
+      ],
+      "name": "toml_datetime",
+      "package_url": "https://github.com/toml-rs/toml",
+      "repository": {
+        "Http": {
+          "sha256": "2b86d767906c6c42421dcba507eb9d203e779497710a47782a224bb871653053",
+          "url": "https://static.crates.io/crates/toml_datetime/1.1.2+spec-1.1.0/download"
+        }
+      },
+      "targets": [
+        {
+          "Library": {
+            "crate_name": "toml_datetime",
+            "crate_root": "src/lib.rs"
+          }
+        }
+      ],
+      "version": "1.1.2+spec-1.1.0"
     },
     "toml_edit 0.22.27": {
       "common_attrs": {
@@ -12975,6 +13576,45 @@
       ],
       "version": "0.22.27"
     },
+    "toml_parser 1.1.5+spec-1.1.0": {
+      "common_attrs": {
+        "crate_features": [
+          "alloc",
+          "std"
+        ],
+        "deps": [
+          {
+            "id": "winnow 1.0.4",
+            "target": "winnow"
+          }
+        ],
+        "edition": "2024"
+      },
+      "library_target_name": "toml_parser",
+      "license": "MIT OR Apache-2.0",
+      "license_file": "LICENSE-APACHE",
+      "license_ids": [
+        "Apache-2.0",
+        "MIT"
+      ],
+      "name": "toml_parser",
+      "package_url": "https://github.com/toml-rs/toml",
+      "repository": {
+        "Http": {
+          "sha256": "baa693a8032d7e1cada7d0041e96126df243179ff061456783ac7f12bda4744c",
+          "url": "https://static.crates.io/crates/toml_parser/1.1.5+spec-1.1.0/download"
+        }
+      },
+      "targets": [
+        {
+          "Library": {
+            "crate_name": "toml_parser",
+            "crate_root": "src/lib.rs"
+          }
+        }
+      ],
+      "version": "1.1.5+spec-1.1.0"
+    },
     "toml_write 0.1.2": {
       "common_attrs": {
         "crate_features": [
@@ -13008,6 +13648,39 @@
         }
       ],
       "version": "0.1.2"
+    },
+    "toml_writer 1.1.3+spec-1.1.0": {
+      "common_attrs": {
+        "crate_features": [
+          "alloc",
+          "std"
+        ],
+        "edition": "2024"
+      },
+      "library_target_name": "toml_writer",
+      "license": "MIT OR Apache-2.0",
+      "license_file": "LICENSE-APACHE",
+      "license_ids": [
+        "Apache-2.0",
+        "MIT"
+      ],
+      "name": "toml_writer",
+      "package_url": "https://github.com/toml-rs/toml",
+      "repository": {
+        "Http": {
+          "sha256": "06bdbd8cfc056b8d2e2e85f29b56a3bdbecb527cef81eb39e3e7b98af4652770",
+          "url": "https://static.crates.io/crates/toml_writer/1.1.3+spec-1.1.0/download"
+        }
+      },
+      "targets": [
+        {
+          "Library": {
+            "crate_name": "toml_writer",
+            "crate_root": "src/lib.rs"
+          }
+        }
+      ],
+      "version": "1.1.3+spec-1.1.0"
     },
     "tower 0.5.3": {
       "common_attrs": {
@@ -16158,6 +16831,34 @@
       ],
       "version": "0.7.15"
     },
+    "winnow 1.0.4": {
+      "common_attrs": {
+        "edition": "2021"
+      },
+      "library_target_name": "winnow",
+      "license": "MIT",
+      "license_file": "LICENSE-MIT",
+      "license_ids": [
+        "MIT"
+      ],
+      "name": "winnow",
+      "package_url": "https://github.com/winnow-rs/winnow",
+      "repository": {
+        "Http": {
+          "sha256": "23b97319f7b8343df12cc98938e5c3eb436064524c8d2b4e30a1d3a36eecdf81",
+          "url": "https://static.crates.io/crates/winnow/1.0.4/download"
+        }
+      },
+      "targets": [
+        {
+          "Library": {
+            "crate_name": "winnow",
+            "crate_root": "src/lib.rs"
+          }
+        }
+      ],
+      "version": "1.0.4"
+    },
     "writeable 0.6.4": {
       "common_attrs": {
         "edition": "2021"
@@ -16751,6 +17452,7 @@
   },
   "direct_deps": [
     "anyhow 1.0.104",
+    "askama 0.14.0",
     "axum 0.7.9",
     "base64 0.22.1",
     "chrono 0.4.45",
@@ -16774,6 +17476,7 @@
     "tokio 1.53.2",
     "tokio-tungstenite 0.24.0",
     "toml 0.8.23",
+    "toml 1.1.8+spec-1.1.0",
     "tracing 0.1.44",
     "tracing-subscriber 0.3.23",
     "uuid 1.27.0",
@@ -16784,11 +17487,12 @@
   ],
   "workspace_members": {
     "magicmtn-assets 0.1.0": "assets",
-    "magicmtn-cli 0.1.0": "cli",
+    "magicmtn-cli 3.1.0": "cli",
     "magicmtn-contracts 0.1.0": "sdk/rust/magicmtn-contracts",
     "magicmtn-engine 0.1.0": "core",
     "magicmtn-local 0.1.0": "local",
     "magicmtn-provider-framework 0.1.0": "sdk/rust/magicmtn-provider-framework",
-    "magicmtn-sdk 0.1.0": "sdk/rust/magicmtn-sdk"
+    "magicmtn-sdk 0.1.0": "sdk/rust/magicmtn-sdk",
+    "magicmtn-web-ui 0.1.0": "web-ui"
   }
 }

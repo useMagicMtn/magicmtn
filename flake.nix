@@ -47,6 +47,7 @@
               ./assets
               ./cli
               ./core
+              ./web-ui
               ./local
               ./sdk/rust
               ./interfaces/pi

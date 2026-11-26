@@ -14,14 +14,16 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sqlx::PgPool;
 use std::fs::{self, File};
-use std::io::Write;
+use std::io::{IsTerminal, Write};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock};
 
+mod dashboard;
 pub mod images;
 mod provider_credentials;
 mod shell;
+mod templates;
 
 pub static MIGRATOR: LazyLock<sqlx::migrate::Migrator> = LazyLock::new(|| {
     magicmtn_engine::schema::compose(sqlx::migrate!("./migrations").iter().cloned())
@@ -29,6 +31,7 @@ pub static MIGRATOR: LazyLock<sqlx::migrate::Migrator> = LazyLock::new(|| {
 
 pub struct Options {
     pub bind: SocketAddr,
+    pub ui_bind: SocketAddr,
     pub directory: PathBuf,
     pub provider_directory: PathBuf,
     pub ttl_seconds: u32,
@@ -171,8 +174,7 @@ async fn authenticate(
     request: Request,
     next: Next,
 ) -> Result<Response, StatusCode> {
-    // The local API has no browser UI. Reject browser-originated requests as well
-    // as requiring a credential, including for reads and health checks.
+    // Browser traffic uses its own listener and credential.
     if request.headers().contains_key(header::ORIGIN) {
         return Err(StatusCode::FORBIDDEN);
     }
@@ -182,17 +184,19 @@ async fn authenticate(
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.strip_prefix("Bearer "))
         .ok_or(StatusCode::UNAUTHORIZED)?;
-    let expected = token.as_bytes();
-    if supplied.len() != expected.len()
-        || supplied
-            .bytes()
-            .zip(expected)
-            .fold(0u8, |diff, (a, b)| diff | (a ^ b))
-            != 0
-    {
+    if !credential_matches(supplied.as_bytes(), token.as_bytes()) {
         return Err(StatusCode::UNAUTHORIZED);
     }
     Ok(next.run(request).await)
+}
+
+fn credential_matches(supplied: &[u8], expected: &[u8]) -> bool {
+    supplied.len() == expected.len()
+        && supplied
+            .iter()
+            .zip(expected)
+            .fold(0u8, |diff, (a, b)| diff | (a ^ b))
+            == 0
 }
 
 pub fn router(
@@ -227,7 +231,7 @@ pub async fn run_with_ready(options: Options, ready: impl FnOnce() -> Result<()>
         .with_writer(std::io::stderr)
         .try_init();
     ensure!(
-        options.bind.ip().is_loopback(),
+        options.bind.ip().is_loopback() && options.ui_bind.ip().is_loopback(),
         "the local server must bind to loopback"
     );
     ensure!(
@@ -283,16 +287,27 @@ pub async fn run_with_ready(options: Options, ready: impl FnOnce() -> Result<()>
     )
     .await?;
     let listener = tokio::net::TcpListener::bind(options.bind).await?;
+    let ui_listener = tokio::net::TcpListener::bind(options.ui_bind)
+        .await
+        .with_context(|| format!("binding dashboard at {}", options.ui_bind))?;
+    let ui_address = ui_listener.local_addr()?;
+    let password = uuid::Uuid::new_v4().simple().to_string();
+    let mut password_file = tempfile::Builder::new()
+        .prefix("dashboard-password-")
+        .tempfile_in(&options.directory)?;
+    writeln!(password_file, "{password}")?;
+    let dashboard = dashboard::router(database.clone(), registry.clone(), &password);
     let info = save_connection(
         &options.directory,
         format!("http://{}", listener.local_addr()?),
     )?;
-    let (stop, mut stopped) = tokio::sync::watch::channel(false);
+    let (stop, stopped) = tokio::sync::watch::channel(false);
     let credential_routes = credentials.router().layer(middleware::from_fn_with_state(
         Arc::new(info.token.clone()),
         authenticate,
     ));
     let image_routes = images::router(database.clone(), registry.clone());
+    let api_stop = stop.clone();
     let app = router(
         store.clone(),
         registry.clone(),
@@ -307,7 +322,7 @@ pub async fn run_with_ready(options: Options, ready: impl FnOnce() -> Result<()>
     .route(
         "/shutdown",
         post(move || {
-            let stop = stop.clone();
+            let stop = api_stop.clone();
             async move {
                 let _ = stop.send(true);
                 Json(json!({"status":"stopping"}))
@@ -323,17 +338,38 @@ pub async fn run_with_ready(options: Options, ready: impl FnOnce() -> Result<()>
         store.clone(),
         registry.clone(),
     ));
+    let templates = tokio::spawn(templates::run(database.clone(), registry.clone()));
     eprintln!("MagicMtn local server listening on {}", info.url);
-    let result = axum::serve(listener, app)
-        .with_graceful_shutdown(async move {
-            tokio::select! { _ = shutdown() => {}, _ = stopped.changed() => {} }
-        })
-        .await;
+    eprintln!("MagicMtn web UI listening on http://{ui_address}");
+    if std::io::stderr().is_terminal() {
+        eprintln!("Dashboard username: magic  Password: {password}");
+    } else {
+        eprintln!(
+            "Dashboard username: magic  Password file: {}",
+            password_file.path().display()
+        );
+    }
+    let mut api_stopped = stopped.clone();
+    let mut ui_stopped = stopped;
+    let signal = tokio::spawn(async move {
+        shutdown().await;
+        let _ = stop.send(true);
+    });
+    let api = axum::serve(listener, app).with_graceful_shutdown(async move {
+        let _ = api_stopped.changed().await;
+    });
+    let ui = axum::serve(ui_listener, dashboard).with_graceful_shutdown(async move {
+        let _ = ui_stopped.changed().await;
+    });
+    let result = tokio::try_join!(async { api.await }, async { ui.await });
+    signal.abort();
+    templates.abort();
+    let _ = templates.await;
     worker.abort();
     let _ = worker.await;
     registry.shutdown().await;
     database.pool.close().await;
-    result.context("serving local sandbox API")
+    result.map(|_| ()).context("serving local MagicMtn")
 }
 
 async fn shutdown() {
