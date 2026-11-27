@@ -26,6 +26,13 @@
   line-height: 1.4;
 }
 
+.theme-doc-sidebar-menu a.menu__link:hover,
+.theme-doc-sidebar-menu a.menu__link:focus-visible {
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.2em;
+}
+
 .docs-sidebar-search {
   padding: 1rem 0.75rem 0.5rem;
 }
