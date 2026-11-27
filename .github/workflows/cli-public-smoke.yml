@@ -1,0 +1,32 @@
+name: Public CLI install and update smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      upgrade_from:
+        description: Retained CLI version to upgrade to the current public release
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  public-install:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Check the real public installer and older updater
+        env:
+          UPGRADE_FROM: ${{ inputs.upgrade_from }}
+        run: python3 scripts/check-cli-public.py --upgrade-from "$UPGRADE_FROM"
