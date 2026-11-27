@@ -4,7 +4,7 @@ Run sandboxes on your Mac through a single-user MagicMtn server. The server stor
 
 ## Prepare your machine
 
-Install the [MagicMtn CLI](../documentation/docs/cli-basics.md#install) and [Apple Container](https://github.com/apple/container). Start the container runtime:
+Use an Apple silicon Mac with macOS 26 or later. Install the [MagicMtn CLI](../documentation/docs/cli-basics.md#install) and [Apple Container](https://github.com/apple/container#get-started). Start the container runtime:
 
 ```sh
 container system start
@@ -42,7 +42,7 @@ magic images prepare canonical --provider apple-container
 Preparation downloads the immutable image for your machine and checks the sandbox runtime, Pi, user, and workspace. The prepared artifact is saved in the local deployment and reused. Create a Canonical sandbox, run a command, and clean up.
 
 ```sh
-sandbox_id=$(magic computer new --image canonical)
+sandbox_id=$(magic computer new --image canonical --provider apple-container)
 magic computer exec "$sandbox_id" -- /bin/echo "hello from the sandbox"
 magic computer terminate "$sandbox_id" --yes
 ```
@@ -65,7 +65,9 @@ For a configured Modal provider, use `--provider modal` with the same `images pr
 
 `magic images list` shows registered images and preparation status per provider, rather than the container runtime's entire image inventory. Listing and registering images work without starting the server; preparation uses the running server and its configured provider connection. Use `--format json` for the catalog as JSON.
 
-## Use Pi with sandbox tools
+## Run Pi inside a sandbox
+
+Install [Pi](../documentation/docs/coding-agents/pi.md#install-pi), configure an inference provider, and prepare Canonical for your sandbox provider. The [Modal and Pi walkthrough](../README.md#add-inference-with-modal-and-pi) covers provider installation and credentials, model selection, and image preparation.
 
 Install the Pi extension in local mode, then start Pi:
 
@@ -74,7 +76,11 @@ magic agents install pi
 pi
 ```
 
-Pi stays on your computer and uses its own model and provider login. Select your model with `/model`. Use `/magic new` to choose a prepared image and provider and create a sandbox and `/magic view` to manage existing sandboxes. Pi can create, inspect, execute commands in, read and write files in, and terminate sandboxes through the MagicMtn tools. Its built-in shell and file tools continue to work on your computer.
+In Pi, run `/magic default` to select a model from your configured inference providers. Run `/magic new` to start a managed Pi session inside a Canonical sandbox. When multiple sandbox backends are prepared, choose the one to use; a single prepared backend is selected automatically. MagicMtn routes the sandbox's model requests to the selected inference provider.
+
+Inside the managed session, Pi's shell and file tools operate in the sandbox, starting in `/computer`. Press **Ctrl+]** to disconnect while the sandbox session keeps running. Use `/magic view` and choose **Resume** to reconnect or **Terminate** to delete the sandbox and its workspace files.
+
+The Pi process on your computer launches and reconnects to these managed sessions. When you return to host Pi, its built-in shell and file tools operate on your computer, and the MagicMtn tools let it manage sandboxes.
 
 ## Restart and clean up
 
