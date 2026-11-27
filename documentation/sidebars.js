@@ -91,6 +91,12 @@ module.exports = {
       "label": "Start the server",
       "href": "/docs/cli-reference/server/"
     },
+    {
+      "type": "category",
+      "label": "Guides",
+      "link": { "type": "doc", "id": "open-source/guides/index" },
+      "items": ["open-source/guides/modal-firecracker"]
+    },
     "web-ui",
     "providers",
     {

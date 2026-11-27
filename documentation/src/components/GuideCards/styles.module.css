@@ -1,0 +1,61 @@
+.grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1.25rem;
+  margin: 1.75rem 0;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  padding: 1.5rem;
+  border: 1px solid var(--ifm-color-emphasis-300);
+  border-radius: 0.75rem;
+  color: var(--ifm-font-color-base);
+  background: var(--ifm-background-surface-color);
+}
+
+.card:hover {
+  border-color: var(--ifm-color-primary);
+  color: var(--ifm-font-color-base);
+  text-decoration: none;
+}
+
+.card:focus-visible {
+  outline: 2px solid var(--ifm-color-primary);
+  outline-offset: 4px;
+}
+
+.title {
+  margin: 0;
+  font-size: 1.2rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.description {
+  flex: 1;
+  margin: 0.75rem 0 1.25rem;
+  color: var(--ifm-color-emphasis-700);
+}
+
+.tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.tag {
+  padding: 0.2rem 0.6rem;
+  border-radius: 1rem;
+  background: var(--ifm-color-emphasis-100);
+  color: var(--ifm-color-emphasis-800);
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+@media (max-width: 700px) {
+  .grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
