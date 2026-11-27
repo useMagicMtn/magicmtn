@@ -1,5 +1,5 @@
 ---
-title: Modal inference with Firecracker isolation
+title: Modal inference + Firecracker microVMs
 slug: /open-source/guides/modal-firecracker
 description: Run MagicMtn-managed Pi in a local Firecracker VM with inference in your own Modal account.
 ---

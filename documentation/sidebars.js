@@ -95,7 +95,7 @@ module.exports = {
       "type": "category",
       "label": "Guides",
       "link": { "type": "doc", "id": "open-source/guides/index" },
-      "items": ["open-source/guides/modal-firecracker"]
+      "items": ["open-source/guides/modal-apple-container", "open-source/guides/modal-firecracker", "open-source/guides/ollama-apple-container"]
     },
     "web-ui",
     "providers",
