@@ -1,4 +1,4 @@
 {
-  "public_key_pem": "",
+  "public_key_pem": "-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAETFvP6CwV28gB39LW6GmARPnjB4sQ\nXDPvp3/hWhEaqmzvOk//dO/dMZuFkCQHNrWFtinpogiwmrExbPfQsuUSDg==\n-----END PUBLIC KEY-----\n",
   "apple_team_id": ""
 }

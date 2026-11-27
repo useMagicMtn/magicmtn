@@ -88,7 +88,7 @@ jobs:
         run: |
           cargo install --locked jj-cli --version 0.47.1
           jj git init --colocate
-      - name: Sign, notarize, and publish authenticated binaries
+      - name: Sign and publish authenticated binaries
         env:
           RELEASE_CHANNEL: ${{ inputs.channel }}
           MAGICMTN_RELEASE_SIGNING_KEY_PEM: ${{ secrets.CLI_RELEASE_SIGNING_KEY_PEM }}
@@ -110,22 +110,31 @@ jobs:
           import os
           from pathlib import Path
           directory = Path(os.environ["SIGNING_DIRECTORY"])
-          for name in ("MAGICMTN_RELEASE_SIGNING_KEY_PEM", "APPLE_CERTIFICATE_P12_BASE64", "APPLE_CERTIFICATE_PASSWORD", "MAGICMTN_APPLE_SIGNING_IDENTITY", "APPLE_NOTARY_KEY_P8", "MAGICMTN_NOTARY_KEY_ID", "MAGICMTN_NOTARY_ISSUER"):
+          import json
+          apple_team = json.loads(Path("release/cli-trust.json").read_text())["apple_team_id"]
+          required = ["MAGICMTN_RELEASE_SIGNING_KEY_PEM"]
+          if apple_team:
+              required += ["APPLE_CERTIFICATE_P12_BASE64", "APPLE_CERTIFICATE_PASSWORD", "MAGICMTN_APPLE_SIGNING_IDENTITY", "APPLE_NOTARY_KEY_P8", "MAGICMTN_NOTARY_KEY_ID", "MAGICMTN_NOTARY_ISSUER"]
+          for name in required:
               if not os.environ.get(name):
                   raise SystemExit("Missing release environment secret: " + name)
           (directory / "release.pem").write_text(os.environ["MAGICMTN_RELEASE_SIGNING_KEY_PEM"])
-          (directory / "certificate.p12").write_bytes(base64.b64decode(os.environ["APPLE_CERTIFICATE_P12_BASE64"], validate=True))
-          (directory / "notary.p8").write_text(os.environ["APPLE_NOTARY_KEY_P8"])
+          if apple_team:
+              (directory / "certificate.p12").write_bytes(base64.b64decode(os.environ["APPLE_CERTIFICATE_P12_BASE64"], validate=True))
+              (directory / "notary.p8").write_text(os.environ["APPLE_NOTARY_KEY_P8"])
           PY
           unset MAGICMTN_RELEASE_SIGNING_KEY_PEM APPLE_CERTIFICATE_P12_BASE64 APPLE_NOTARY_KEY_P8
-          keychain_password=$(openssl rand -hex 32)
-          security create-keychain -p "$keychain_password" "$keychain"
-          security set-keychain-settings -lut 3600 "$keychain"
-          security unlock-keychain -p "$keychain_password" "$keychain"
-          security import "$signing_directory/certificate.p12" -k "$keychain" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
-          unset APPLE_CERTIFICATE_PASSWORD
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain" >/dev/null
-          security list-keychains -d user -s "$keychain" "$HOME/Library/Keychains/login.keychain-db"
+          apple_team_id=$(python3 -c 'import json; print(json.load(open("release/cli-trust.json"))["apple_team_id"])')
+          if [ -n "$apple_team_id" ]; then
+            keychain_password=$(openssl rand -hex 32)
+            security create-keychain -p "$keychain_password" "$keychain"
+            security set-keychain-settings -lut 3600 "$keychain"
+            security unlock-keychain -p "$keychain_password" "$keychain"
+            security import "$signing_directory/certificate.p12" -k "$keychain" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+            unset APPLE_CERTIFICATE_PASSWORD
+            security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain" >/dev/null
+            security list-keychains -d user -s "$keychain" "$HOME/Library/Keychains/login.keychain-db"
+          fi
           export MAGICMTN_RELEASE_SIGNING_KEY_FILE="$signing_directory/release.pem"
           export MAGICMTN_NOTARY_KEY_FILE="$signing_directory/notary.p8"
           cp dist/bin/magic dist/bin/magic-darwin-arm64

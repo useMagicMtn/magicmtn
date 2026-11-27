@@ -28,11 +28,12 @@ impl Trust {
 
     fn public_point(&self) -> Result<Vec<u8>> {
         ensure!(
-            self.apple_team_id.len() == 10
-                && self
-                    .apple_team_id
-                    .bytes()
-                    .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()),
+            self.apple_team_id.is_empty()
+                || (self.apple_team_id.len() == 10
+                    && self
+                        .apple_team_id
+                        .bytes()
+                        .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())),
             "trusted CLI publisher is not configured; use the authenticated installer"
         );
         let encoded = self
@@ -166,6 +167,9 @@ pub(crate) fn verify(bytes: &[u8], trust: &Trust, now: u64) -> Result<Manifest> 
 }
 
 pub(crate) fn verify_macos_binary(path: &std::path::Path, trust: &Trust) -> Result<()> {
+    if trust.apple_team_id.is_empty() {
+        return Ok(());
+    }
     let requirement = format!(
         "anchor apple generic and certificate leaf[subject.OU] = \"{}\"",
         trust.apple_team_id
@@ -242,6 +246,24 @@ mod tests {
         assert!(verify(&bytes, &trust, now + MAX_LIFETIME).is_err());
         assert!(verify(&bytes, &trust, now - 1000).is_err());
         assert!(verify(br#"{"release":"unsigned","platforms":{}}"#, &trust, now).is_err());
+    }
+
+    #[test]
+    fn project_signatures_work_without_an_apple_identity() {
+        let (_, bytes, now) = fixture();
+        let envelope: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let mut payload: serde_json::Value = serde_json::from_slice(
+            &STANDARD
+                .decode(envelope["payload"].as_str().unwrap())
+                .unwrap(),
+        )
+        .unwrap();
+        payload["apple_team_id"] = "".into();
+        let (mut trust, signed) = sign_test_manifest(payload);
+        trust.apple_team_id.clear();
+        assert!(verify(&signed, &trust, now).is_ok());
+        trust.public_key_pem.clear();
+        assert!(verify(&signed, &trust, now).is_err());
     }
 
     #[test]

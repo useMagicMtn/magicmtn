@@ -102,8 +102,8 @@ Resources:
                           raise ValueError("The bootstrap installer must be served independently")
                       installer = response.read(32769).decode("utf-8")
                   public_key = re.search(r"public_key=\$\(cat <<'MAGICMTN_PUBLIC_KEY'\n(-----BEGIN PUBLIC KEY-----\n[A-Za-z0-9+/=\n]+-----END PUBLIC KEY-----)\nMAGICMTN_PUBLIC_KEY", installer)
-                  team = re.search(r"^apple_team_id='([A-Z0-9]{10})'$", installer, re.MULTILINE)
-                  if not public_key or not team:
+                  team = re.search(r"^apple_team_id='([A-Z0-9]{0,10})'$", installer, re.MULTILINE)
+                  if not public_key or not team or (team[1] and len(team[1]) != 10):
                       raise ValueError("The bootstrap installer must pin the release publisher")
                   with urlopen(base + "/latest.signed.json", timeout=30) as response:
                       envelope = json.loads(response.read(32769))

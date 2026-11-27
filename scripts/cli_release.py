@@ -40,7 +40,7 @@ def trust(path=TRUST):
     value = json.loads(Path(path).read_text())
     if not isinstance(value, dict) or set(value) != {"public_key_pem", "apple_team_id"}:
         raise ValueError("Release trust must contain only the public key and Apple team ID")
-    if not re.fullmatch(r"[A-Z0-9]{10}", value.get("apple_team_id", "")):
+    if value.get("apple_team_id") != "" and not re.fullmatch(r"[A-Z0-9]{10}", value.get("apple_team_id", "")):
         raise ValueError("Configure apple_team_id in release/cli-trust.json before releasing")
     public = value.get("public_key_pem", "")
     with tempfile.TemporaryDirectory(prefix="magic-release-trust-") as directory:
@@ -157,6 +157,8 @@ def verify_macos_signature(binary, configuration):
 
 
 def verify_notarization(binary, receipt_path, configuration):
+    if not configuration["apple_team_id"]:
+        return None
     verify_macos_signature(binary, configuration)
     receipt = json.loads(Path(receipt_path).read_text())
     archive = Path(receipt_path).parent / "magic-darwin-arm64.zip"
@@ -180,6 +182,8 @@ def verify_notarization(binary, receipt_path, configuration):
 
 
 def notarize(binary, receipt_path, identity, configuration):
+    if not configuration["apple_team_id"]:
+        return None
     binary, receipt_path = Path(binary), Path(receipt_path)
     credentials = notary_credentials()
     try:
@@ -234,7 +238,7 @@ def keygen(private_key, team):
         raise ValueError("A release key is already pinned; key rotation requires a separate rollout")
     if private_key.is_relative_to(ROOT):
         raise ValueError("Store the private signing key outside the repository")
-    if not re.fullmatch(r"[A-Z0-9]{10}", team):
+    if team and not re.fullmatch(r"[A-Z0-9]{10}", team):
         raise ValueError("Supply the ten-character Apple team ID")
     descriptor = os.open(private_key, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
     try:
@@ -255,7 +259,7 @@ def main():
     sub.add_parser("check-bootstrap")
     key = sub.add_parser("keygen")
     key.add_argument("--private-key", type=Path, required=True)
-    key.add_argument("--apple-team-id", required=True)
+    key.add_argument("--apple-team-id", default="", help="Optional Apple Developer team ID for notarized releases")
     mac = sub.add_parser("notarize")
     mac.add_argument("--binary", type=Path, required=True)
     mac.add_argument("--receipt", type=Path, required=True)

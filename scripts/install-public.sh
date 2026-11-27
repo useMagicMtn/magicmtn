@@ -1,9 +1,9 @@
 #!/bin/sh
-# Served by the application deployment, independently of the download bucket.
+# Served by the HTTPS deployment, independently of the download bucket.
 set -eu
 
 base_url='https://magicmtn-cli-993499103295.s3.us-east-2.amazonaws.com'
-# The application embeds these public values from committed release/cli-trust.json.
+# The bootstrap pins these public values from committed release/cli-trust.json.
 apple_team_id='@APPLE_TEAM_ID@'
 public_key=$(cat <<'MAGICMTN_PUBLIC_KEY'
 @RELEASE_PUBLIC_KEY@
@@ -73,7 +73,7 @@ actual=$(openssl dgst -sha256 "$temporary/magic" | awk '{print $NF}')
 if [ "$actual" != "$expected" ]; then
   printf 'Error: the CLI does not match its signed SHA-256; nothing was installed.\n' >&2; exit 1;
 fi
-if [ "$platform" = darwin-arm64 ]; then
+if [ "$platform" = darwin-arm64 ] && [ -n "$apple_team_id" ]; then
   /usr/bin/codesign --verify --strict -R "anchor apple generic and certificate leaf[subject.OU] = \"$apple_team_id\"" "$temporary/magic"
 fi
 chmod 755 "$temporary/magic"

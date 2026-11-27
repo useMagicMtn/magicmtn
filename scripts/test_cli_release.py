@@ -67,6 +67,23 @@ class ReleaseTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             release.sign_payload({**self.payload, "apple_team_id": "OTHER12345"}, self.private, self.configuration)
 
+    def test_project_key_only_release_and_installer_keep_signature_verification(self):
+        self.configuration["apple_team_id"] = ""
+        self.payload["apple_team_id"] = ""
+        self.trust.write_text(json.dumps(self.configuration))
+        self.assertEqual(release.trust(self.trust), self.configuration)
+        self.signed = release.sign_payload(self.payload, self.private, self.configuration)
+        with mock.patch.object(release, "notary_credentials", side_effect=AssertionError("Apple credentials must not be requested")):
+            release.verify_notarization(self.root / "unused", self.root / "unused-receipt", self.configuration)
+            release.notarize(self.root / "unused", self.root / "unused-receipt", None, self.configuration)
+        result, _, target = self.installer()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual((target / "magic").read_bytes(), self.binary)
+        self.assertIn('version "1.1.2"', self.homebrew_formula(self.signed))
+        result, _, target = self.installer(signed=self.signed.replace('"signature":"', '"signature":"AAAA'))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual((target / "magic").read_bytes(), b"old installation\n")
+
     def test_artifact_substitution_is_rejected(self):
         for platform in release.PLATFORMS:
             (self.root / ("magic-" + platform)).write_bytes(self.binary)
