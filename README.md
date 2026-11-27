@@ -95,9 +95,11 @@ magic agents install pi
 pi
 ```
 
-In Pi, run `/magic default` and select **Kimi K3** with **Modal** as the inference provider. Run `/magic new` and choose **Apple Container** as the sandbox backend. MagicMtn starts Pi inside the local VM and routes its model requests to your Modal endpoint.
+In Pi, run `/magic default` and select **Kimi K3** with **Modal** as the inference provider. Run `/magic new` and choose **Apple Container** as the sandbox backend.
 
-Ask Pi to work in its isolated workspace:
+MagicMtn starts Pi inside the local VM and routes its model requests to your Modal endpoint.
+
+Example: Ask Pi to work in its isolated workspace:
 
 > Create a Python script in /computer that prints the first 20 Fibonacci numbers, run it, and show me the output.
 
@@ -116,7 +118,9 @@ pi
 
 Keep the same model in `/magic default`. Run `/magic new` and choose **Modal** as the sandbox backend. MagicMtn runs Pi in the Modal sandbox and sends inference requests to the same model endpoint.
 
-Use the same prompt, **Ctrl+]** to disconnect, and `/magic view` to resume or terminate the workspace. After terminating your workspaces, run `magic server stop` to stop the local server. See the [Modal provider setup guide](https://github.com/useMagicMtn/provider-modal/blob/main/USAGE.md) for account and endpoint configuration.
+Use the same prompt, **Ctrl+]** to disconnect, and `/magic view` to resume or terminate the workspace. After terminating your workspaces, run `magic server stop` to stop the local server.
+
+See the [Modal provider setup guide](https://github.com/useMagicMtn/provider-modal/blob/main/USAGE.md) for account and endpoint configuration.
 
 ## Use the MagicMtn Web UI
 
