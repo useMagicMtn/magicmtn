@@ -1,0 +1,76 @@
+name: Renew signed CLI metadata
+
+on:
+  schedule:
+    - cron: '0 8 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cli-release
+  cancel-in-progress: false
+
+jobs:
+  renew:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: cli-release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Authenticate the published source revision
+        id: release
+        run: |
+          python3 - <<'PY'
+          import os
+          import sys
+          import urllib.request
+          sys.path.insert(0, "scripts")
+          import cli_release
+          with urllib.request.urlopen(cli_release.DOWNLOADS + "/latest.signed.json", timeout=30) as response:
+              manifest = cli_release.verify_envelope(response.read(32769), cli_release.trust(), allow_expired=True)
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              output.write("source=" + manifest["source_commit"] + "\n")
+          PY
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ steps.release.outputs.source }}
+          persist-credentials: false
+      - run: rustup toolchain install
+      - name: Prepare clean Jujutsu source
+        run: |
+          cargo install --locked jj-cli --version 0.47.1
+          jj git init --colocate
+      - uses: aws-actions/configure-aws-credentials@ff717079ee2060e4bcee96c4779b553acc87447c # v4
+        with:
+          role-to-assume: ${{ vars.CLI_RELEASE_AWS_ROLE_ARN }}
+          aws-region: us-east-2
+      - name: Renew the authenticated manifest without replacing artifacts
+        env:
+          RELEASE_PRIVATE_KEY: ${{ secrets.CLI_RELEASE_SIGNING_KEY_PEM }}
+        run: |
+          set -eu
+          umask 077
+          signing_directory=$(mktemp -d "$RUNNER_TEMP/cli-renew.XXXXXX")
+          trap 'rm -rf "$signing_directory"' EXIT
+          export MAGICMTN_RELEASE_SIGNING_KEY_FILE="$signing_directory/release.pem"
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          key = os.environ["RELEASE_PRIVATE_KEY"]
+          if not key:
+              raise SystemExit("Missing CLI_RELEASE_SIGNING_KEY_PEM")
+          Path(os.environ["MAGICMTN_RELEASE_SIGNING_KEY_FILE"]).write_text(key)
+          PY
+          unset RELEASE_PRIVATE_KEY
+          python3 scripts/publish-cli.py --refresh-metadata

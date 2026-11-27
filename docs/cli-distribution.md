@@ -39,7 +39,9 @@ python3 scripts/publish-cli.py --aws-profile magicmtn
 
 For prebuilt artifacts, pass `--skip-build` to the publisher. When an Apple identity is pinned, first notarize `dist/bin/magic-darwin-arm64` with `scripts/cli_release.py notarize --binary dist/bin/magic-darwin-arm64 --receipt dist/bin/notarization.json`; the publisher independently checks Apple's acceptance before uploading. `--dry-run` prepares and authenticates the release without uploading or deleting objects.
 
-Signed metadata is valid for fourteen days. Renew it before expiration from a clean checkout of the published source commit:
+Signed metadata is valid for fourteen days. The **Renew signed CLI metadata** workflow refreshes it weekly and supports manual dispatch. It authenticates the published source revision before checking it out and signing fresh validity dates.
+
+To renew locally, use a clean checkout of the published source commit:
 
 ```sh
 python3 scripts/publish-cli.py --refresh-metadata --aws-profile magicmtn
