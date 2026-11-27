@@ -420,7 +420,10 @@ pub(crate) async fn terminal(api: &Api, path: &str, label: &str) -> Result<()> {
     let attached = api
         .request(Method::POST, path, Some(json!({"cols":cols,"rows":rows,"error_reporting":crate::configuration::error_reporting()?})))
         .await?;
-    let gateway_client = crate::http_client()?;
+    // WebSocket upgrades require HTTP/1.1 at TLS negotiation too. A request's
+    // version alone does not prevent ALPN from choosing HTTP/2 and dropping
+    // the Connection/Upgrade headers at the HTTPS ingress.
+    let gateway_client = crate::http_client_builder()?.http1_only().build()?;
     let gateway = attached["poll_url"]
         .as_str()
         .map(url_for_gateway)

@@ -8,6 +8,8 @@ import os
 import pathlib
 import pty
 import select
+import shutil
+import socket
 import struct
 import subprocess
 import tempfile
@@ -33,7 +35,12 @@ class StreamTerminalTest(unittest.TestCase):
     def test_resume_claims_the_relay_from_the_previous_client(self):
         self.run_terminal(previous_client=True)
 
-    def run_terminal(self, previous_client):
+    @unittest.skipUnless(shutil.which("caddy") and shutil.which("openssl"),
+                         "install Caddy and OpenSSL to test HTTPS protocol negotiation")
+    def test_https_stream_negotiates_http1_with_http2_ingress(self):
+        self.run_terminal(previous_client=True, https=True)
+
+    def run_terminal(self, previous_client, https=False):
         binary = str(pathlib.Path(os.environ["MAGICMTN_TEST_MAGIC"]).resolve())
         with tempfile.TemporaryDirectory() as home:
             state = {"seq": 0, "output": b"remote stream ready\r\n", "input": bytearray(),
@@ -78,6 +85,58 @@ class StreamTerminalTest(unittest.TestCase):
             ws_thread = threading.Thread(target=ws.serve_forever)
             ws_thread.start()
             stream_url = f"http://127.0.0.1:{ws.socket.getsockname()[1]}/stream"
+            tls_env = {}
+            if https:
+                certificate = pathlib.Path(home) / "ca.pem"
+                ca_key = pathlib.Path(home) / "ca-key.pem"
+                key = pathlib.Path(home) / "key.pem"
+                csr = pathlib.Path(home) / "localhost.csr"
+                leaf = pathlib.Path(home) / "localhost.pem"
+                extensions = pathlib.Path(home) / "localhost.ext"
+                extensions.write_text("subjectAltName=DNS:localhost\nbasicConstraints=critical,CA:FALSE\n"
+                                      "keyUsage=critical,digitalSignature,keyEncipherment\n"
+                                      "extendedKeyUsage=serverAuth\n")
+                for command in (
+                    ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", str(ca_key),
+                     "-out", str(certificate), "-days", "1", "-subj", "/CN=Terminal test CA",
+                     "-addext", "basicConstraints=critical,CA:TRUE"],
+                    ["req", "-new", "-newkey", "rsa:2048", "-nodes", "-keyout", str(key),
+                     "-out", str(csr), "-subj", "/CN=localhost"],
+                    ["x509", "-req", "-in", str(csr), "-CA", str(certificate), "-CAkey", str(ca_key),
+                     "-CAcreateserial", "-out", str(leaf), "-days", "1", "-extfile", str(extensions)],
+                ):
+                    subprocess.run(["openssl", *command], check=True,
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                with socket.socket() as port_socket:
+                    port_socket.bind(("127.0.0.1", 0))
+                    tls_port = port_socket.getsockname()[1]
+                config = pathlib.Path(home) / "Caddyfile"
+                config.write_text(f"{{\n admin off\n auto_https off\n}}\n"
+                                  f"https://localhost:{tls_port} {{\n"
+                                  f" tls {leaf} {key}\n"
+                                  f" reverse_proxy 127.0.0.1:{ws.socket.getsockname()[1]}\n}}\n")
+                proxy_log = open(pathlib.Path(home) / "caddy.log", "w+")
+                self.addCleanup(proxy_log.close)
+                proxy = subprocess.Popen(["caddy", "run", "--config", str(config), "--adapter", "caddyfile"],
+                                         stdout=proxy_log, stderr=subprocess.STDOUT,
+                                         env=dict(os.environ, XDG_DATA_HOME=home, XDG_CONFIG_HOME=home))
+                def stop_proxy():
+                    proxy.terminate()
+                    proxy.wait(timeout=5)
+                self.addCleanup(stop_proxy)
+                for _ in range(100):
+                    if proxy.poll() is not None:
+                        proxy_log.seek(0)
+                        self.fail(proxy_log.read())
+                    try:
+                        with socket.create_connection(("127.0.0.1", tls_port), timeout=0.1):
+                            break
+                    except OSError:
+                        time.sleep(0.05)
+                else:
+                    self.fail("HTTPS proxy did not start")
+                stream_url = f"https://localhost:{tls_port}/stream"
+                tls_env["MAGICMTN_CA_CERT"] = str(certificate)
 
             class Handler(http.server.BaseHTTPRequestHandler):
                 def log_message(self, *args):
@@ -112,12 +171,12 @@ class StreamTerminalTest(unittest.TestCase):
             before = termios.tcgetattr(slave)
             fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
             process = subprocess.Popen([binary, "--server-url", origin, "pi", "attach", str(uuid.uuid4())],
-                                       stdin=slave, stdout=slave, stderr=slave, env=dict(os.environ, HOME=home))
+                                       stdin=slave, stdout=slave, stderr=slave, env=dict(os.environ, HOME=home, **tls_env))
             output = bytearray()
             typed = False
             detached = False
             try:
-                deadline = time.monotonic() + 10
+                deadline = time.monotonic() + 20
                 while process.poll() is None and time.monotonic() < deadline:
                     if select.select([master], [], [], 0.025)[0]:
                         output.extend(os.read(master, 8192))
@@ -129,7 +188,8 @@ class StreamTerminalTest(unittest.TestCase):
                             and any(f["cols"] == 100 for f in state["frames"]) and not detached):
                         os.write(master, b"\x1b[93;5u")
                         detached = True
-                self.assertEqual(process.wait(timeout=2), 0, output.decode(errors="replace"))
+                self.assertIsNotNone(process.poll(), output.decode(errors="replace"))
+                self.assertEqual(process.returncode, 0, output.decode(errors="replace"))
                 self.assertTrue(typed and detached, output.decode(errors="replace"))
                 self.assertEqual(state["input"], "typed 雪\r".encode())
                 self.assertEqual(claims, [{"client_id": client_id, "seq": 0, "input": "",

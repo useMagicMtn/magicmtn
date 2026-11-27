@@ -565,6 +565,10 @@ struct Api {
     local: bool,
 }
 fn http_client() -> Result<reqwest::Client> {
+    Ok(http_client_builder()?.build()?)
+}
+
+fn http_client_builder() -> Result<reqwest::ClientBuilder> {
     let mut builder = reqwest::Client::builder()
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
@@ -582,7 +586,7 @@ fn http_client() -> Result<reqwest::Client> {
             builder = builder.add_root_certificate(certificate);
         }
     }
-    Ok(builder.build()?)
+    Ok(builder)
 }
 impl Api {
     fn new(base: &str) -> Result<Self> {

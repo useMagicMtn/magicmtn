@@ -88,3 +88,11 @@ jobs:
         env:
           MAGICMTN_TEST_MAGIC: ${{ github.workspace }}/target/debug/magic
         run: python3 -m unittest discover -s cli/tests -p test_local_terminal.py
+      - name: Verify terminal streams through HTTPS ingress
+        env:
+          MAGICMTN_TEST_MAGIC: ${{ github.workspace }}/target/debug/magic
+        run: |
+          sudo apt-get update && sudo apt-get install -y caddy openssl
+          python3 -m venv "$RUNNER_TEMP/terminal-tests"
+          "$RUNNER_TEMP/terminal-tests/bin/pip" install -r runtime/requirements.txt
+          "$RUNNER_TEMP/terminal-tests/bin/python" -m unittest discover -s cli/tests -p test_pi_stream.py
