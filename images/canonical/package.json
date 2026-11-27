@@ -5,7 +5,7 @@
   "description": "Pinned Pi, Codex, Claude Code, and OpenCode installations for the canonical MagicMtn sandbox image",
   "dependencies": {
     "@anthropic-ai/claude-code": "2.1.311",
-    "@earendil-works/pi-coding-agent": "1.6.1",
+    "@earendil-works/pi-coding-agent": "1.7.0",
     "@openai/codex": "0.169.0",
     "@opencode/cli": "2.3.2",
     "glob": "14.0.6",

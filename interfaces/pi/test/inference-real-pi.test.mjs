@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
-test("Pi 1.4 native model selection updates footer state and routes each model through MagicMtn", { skip: !process.env.MAGICMTN_TEST_PI, timeout: 45000 }, async (t) => {
+test("Pinned Pi native model selection updates footer state and routes each model through MagicMtn", { skip: !process.env.MAGICMTN_TEST_PI, timeout: 45000 }, async (t) => {
   const directory = mkdtempSync(join(tmpdir(), "magicmtn-real-pi-inference-"));
   const models = [
     { id: "5269bd6d-e31d-42e8-812f-989be2bb3e57", display_name: "Kimi K3", provider: "fireworks" },
@@ -34,7 +34,7 @@ const args=process.argv.slice(2);fs.appendFileSync(${JSON.stringify(log)},JSON.s
 const models=${JSON.stringify(models)};
 let value;
 if(args[1]==='account')value={signed_in:true};
-else if(args[1]==='catalog')value={models};
+else if(args[1]==='catalog')value={models,defaults:{model_id:models[0].id,inference_source:'magicmtn'}};
 else if(args[1]==='inference'){
  const id=args[args.indexOf('--model')+1];const model=models.find(m=>m.id===id);
  if(!model)process.exit(2);
@@ -46,7 +46,7 @@ console.log(JSON.stringify(value));`, { mode: 0o755 });
   // provide its public SDK imports just as it does after magic pi install.
   const extensionDirectory = join(directory, "extension");
   mkdirSync(extensionDirectory);
-  for (const filename of ["index.js", "inference.js", "picker.js", "workspace.js"]) {
+  for (const filename of ["index.js", "inference.js", "picker.js", "workspace.js", "local.js"]) {
     copyFileSync(fileURLToPath(new URL(`../${filename}`, import.meta.url)), join(extensionDirectory, filename));
   }
   writeFileSync(join(extensionDirectory, "package.json"), '{"type":"module"}');

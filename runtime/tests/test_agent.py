@@ -198,23 +198,23 @@ class SupervisorTests(unittest.TestCase):
         self.assertEqual(harness.command(), command)
         self.assertEqual(json.loads(session_file.read_text()), header)
 
-    @unittest.skipUnless(os.environ.get("MAGICMTN_TEST_PI"), "set MAGICMTN_TEST_PI to pinned Pi 1.2 executable")
+    @unittest.skipUnless(os.environ.get("MAGICMTN_TEST_PI"), "set MAGICMTN_TEST_PI to the pinned Pi executable")
     def test_real_pi_tool_loop_history_resume_and_async_sync(self):
         self.run_real_pi_loop()
 
-    @unittest.skipUnless(os.environ.get("MAGICMTN_TEST_PI"), "set MAGICMTN_TEST_PI to pinned Pi 1.2 executable")
+    @unittest.skipUnless(os.environ.get("MAGICMTN_TEST_PI"), "set MAGICMTN_TEST_PI to the pinned Pi executable")
     def test_real_pi_native_selected_model_uses_gateway_and_retains_history(self):
         self.run_real_pi_loop(native=True)
 
     def run_real_pi_loop(self, native=False):
-        legacy_path = AGENT.parents[1] / "server" / "runtime" / "tests" / "test_pi_agent.py"
-        legacy_spec = importlib.util.spec_from_file_location("legacy_transport_fixture", legacy_path)
-        legacy = importlib.util.module_from_spec(legacy_spec)
-        legacy_spec.loader.exec_module(legacy)
-        handler = legacy.Handler.do_POST
+        fixture_path = pathlib.Path(__file__).with_name("pi_fixture.py")
+        fixture_spec = importlib.util.spec_from_file_location("pi_transport_fixture", fixture_path)
+        fixture = importlib.util.module_from_spec(fixture_spec)
+        fixture_spec.loader.exec_module(fixture)
+        handler = fixture.Handler.do_POST
         supervisor = self.supervisor
         uploads = self.chunks
-        class Handler(legacy.Handler):
+        class Handler(fixture.Handler):
             def do_POST(request):
                 if request.path.endswith(("/renew", "/chunks")):
                     if request.headers.get("Authorization") != "Bearer test-scoped-token":
@@ -231,12 +231,11 @@ class SupervisorTests(unittest.TestCase):
                     request.wfile.write(json.dumps(response).encode())
                 else:
                     handler(request)
-        # Reuse only the credential-free mock inference protocol from the
-        # previous adapter tests. This runs the actual pinned Pi executable.
-        original_handler = legacy.Handler
-        legacy.Handler = Handler
-        bridge = legacy.Bridge()
-        legacy.Handler = original_handler
+        # Run the pinned Pi executable against the local mock inference protocol.
+        original_handler = fixture.Handler
+        fixture.Handler = Handler
+        bridge = fixture.Bridge()
+        fixture.Handler = original_handler
         bridge.real_pi = True
         self.config.update(origin=f"http://127.0.0.1:{bridge.server_port}", token="test-scoped-token", model={"id":"test-model","name":"Test","reasoning":False,"input":["text"],"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0},"contextWindow":32768,"maxTokens":4096})
         if native:
