@@ -13,7 +13,7 @@ const SPKI_PREFIX: &[u8] = &[
     0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07, 0x03, 0x42, 0x00,
 ];
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Trust {
     pub public_key_pem: String,
@@ -76,9 +76,34 @@ pub(crate) struct Manifest {
     apple_team_id: String,
 }
 
+impl Manifest {
+    pub(crate) fn is_stable(&self) -> bool {
+        self.channel == "stable"
+    }
+}
+
+pub(crate) fn stable_version(value: &str) -> Result<[u64; 3]> {
+    let parts: Vec<_> = value.split('.').collect();
+    ensure!(
+        parts.len() == 3,
+        "release must use a stable semantic version"
+    );
+    let mut version = [0; 3];
+    for (index, part) in parts.into_iter().enumerate() {
+        ensure!(
+            !part.is_empty()
+                && part.bytes().all(|byte| byte.is_ascii_digit())
+                && (part == "0" || !part.starts_with('0')),
+            "release must use a stable semantic version"
+        );
+        version[index] = part.parse().context("release version is too large")?;
+    }
+    Ok(version)
+}
+
 pub(crate) fn verify(bytes: &[u8], trust: &Trust, now: u64) -> Result<Manifest> {
     let envelope: Envelope = serde_json::from_slice(bytes)
-        .context("a signed CLI release manifest is required; use https://control.magicmtn.ai/install.sh to upgrade older installations")?;
+        .context("a signed CLI release manifest is required; use https://magicmtn.ai/install.sh to upgrade older installations")?;
     let payload = STANDARD
         .decode(envelope.payload)
         .context("invalid signed release payload")?;
@@ -104,7 +129,7 @@ pub(crate) fn verify(bytes: &[u8], trust: &Trust, now: u64) -> Result<Manifest> 
             && manifest
                 .release
                 .bytes()
-                .all(|c| c.is_ascii_alphanumeric() || c == b'-'),
+                .all(|c| c.is_ascii_alphanumeric() || b"-.".contains(&c)),
         "invalid signed release identifier"
     );
     ensure!(

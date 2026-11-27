@@ -22,7 +22,6 @@ on:
       - 'release/**'
       - 'scripts/*cli*'
       - 'scripts/install-public.sh'
-      - 'scripts/install-checksum.sh'
       - 'scripts/test-install-public.sh'
       - 'tests/fixtures/cli-release/**'
       - 'server/src/cli_installer.rs'
@@ -51,7 +50,6 @@ on:
       - 'release/**'
       - 'scripts/*cli*'
       - 'scripts/install-public.sh'
-      - 'scripts/install-checksum.sh'
       - 'scripts/test-install-public.sh'
       - 'tests/fixtures/cli-release/**'
       - 'server/src/cli_installer.rs'
@@ -96,3 +94,20 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/terminal-tests"
           "$RUNNER_TEMP/terminal-tests/bin/pip" install -r runtime/requirements.txt
           "$RUNNER_TEMP/terminal-tests/bin/python" -m unittest discover -s cli/tests -p test_pi_stream.py
+
+  release-security:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: rustup toolchain install
+      - run: python3 -m unittest discover -s scripts -p 'test_cli*.py'
+      - run: cargo test --locked -p magicmtn-cli --bin magic release::tests
+      - run: cargo test --locked -p magicmtn-cli --bin magic update::tests

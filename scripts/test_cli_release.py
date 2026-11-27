@@ -8,6 +8,8 @@ import subprocess
 import tempfile
 import time
 import unittest
+import textwrap
+import types
 from unittest import mock
 
 import cli_release as release
@@ -31,7 +33,7 @@ class ReleaseTest(unittest.TestCase):
         self.trust.write_text(json.dumps(self.configuration))
         now = int(time.time())
         self.binary = b"#!/bin/sh\ncase \"$1\" in --version) echo 'magic test';; completion) printf '%s\\n' \"$@\" > \"$HOME/completion-args\";; *) exit 1;; esac\n"
-        self.payload = {"schema": 1, "release": "test-release", "channel": "beta", "source_commit": "a" * 40,
+        self.payload = {"schema": 1, "release": "1.1.2", "channel": "stable", "source_commit": "a" * 40,
                         "issued_at": now - 1, "expires_at": now + 3600, "apple_team_id": "ABCDE12345",
                         "platforms": {name: hashlib.sha256(self.binary).hexdigest() for name in release.PLATFORMS}}
         self.signed = release.sign_payload(self.payload, self.private, self.configuration)
@@ -56,6 +58,10 @@ class ReleaseTest(unittest.TestCase):
             release.verify_envelope(json.dumps(self.payload), self.configuration)
         with self.assertRaises(ValueError):
             release.verify_envelope(self.signed, self.configuration, now=self.payload["expires_at"])
+        self.assertEqual(
+            release.verify_envelope(self.signed, self.configuration, now=self.payload["expires_at"], allow_expired=True)["release"],
+            self.payload["release"],
+        )
         with self.assertRaises(ValueError):
             release.verify_envelope(self.signed, self.configuration, now=self.payload["issued_at"] - 1000)
         with self.assertRaises(ValueError):
@@ -76,14 +82,14 @@ class ReleaseTest(unittest.TestCase):
             with self.assertRaises((ValueError, subprocess.CalledProcessError)):
                 release.trust(self.trust)
 
-    def test_checksum_publication_requires_all_artifacts_before_upload(self):
-        with mock.patch("sys.argv", ["publish-cli.py", "--skip-build", "--artifacts", str(self.root), "--output", str(self.root / "output")]), \
+    def test_signed_publication_requires_all_artifacts_before_upload(self):
+        with mock.patch("sys.argv", ["publish-cli.py", "--skip-build", "--artifacts", str(self.root), "--output", str(self.root / "output"), "--signing-key", str(self.private)]), \
                 mock.patch.object(publisher.subprocess, "run") as run:
             with self.assertRaisesRegex(ValueError, "Missing or empty artifact"):
                 publisher.main()
             run.assert_not_called()
 
-    def test_checksum_publication_promotes_only_a_complete_release(self):
+    def test_signed_publication_promotes_only_a_complete_release(self):
         import types
         for platform in publisher.PLATFORMS:
             (self.root / ("magic-" + platform)).write_bytes(self.binary)
@@ -92,16 +98,20 @@ class ReleaseTest(unittest.TestCase):
             run=mock.Mock(), check_output=mock.Mock(side_effect=["a" * 40, b"", f"magic {publisher.cli_version.current(publisher.ROOT)}"]),
             CalledProcessError=subprocess.CalledProcessError, DEVNULL=subprocess.DEVNULL,
         )
-        with mock.patch("sys.argv", ["publish-cli.py", "--skip-build", "--artifacts", str(self.root), "--output", str(output)]), \
+        with mock.patch("sys.argv", ["publish-cli.py", "--skip-build", "--artifacts", str(self.root), "--output", str(output), "--signing-key", str(self.private)]), \
                 mock.patch.object(publisher, "subprocess", process), \
                 mock.patch.object(publisher, "release_objects", return_value=[]), \
-                mock.patch.object(publisher, "prune_releases"):
+                mock.patch.object(publisher, "prune_releases"), \
+                mock.patch.object(release, "trust", return_value=self.configuration), \
+                mock.patch.object(release, "verify_notarization"), \
+                mock.patch.object(release, "verify_bootstrap"):
             publisher.main()
         destinations = [call.args[0][call.args[0].index("--key") + 1] if "--key" in call.args[0] else call.args[0][4] for call in process.run.call_args_list]
-        self.assertTrue(any(url.endswith("/LICENSE") for url in destinations[:-2]))
+        self.assertTrue(any(url.endswith("/LICENSE") for url in destinations[:-3]))
         self.assertEqual((output / "LICENSE").read_bytes(), (publisher.ROOT / "LICENSE").read_bytes())
-        for call in process.run.call_args_list[:-2]:
+        for call in process.run.call_args_list[:-3]:
             self.assertIn("--if-none-match", call.args[0])
+        self.assertTrue(destinations[-3].endswith("/latest.signed.json"))
         self.assertTrue(destinations[-2].endswith("/latest.json"))
         self.assertTrue(destinations[-1].endswith("/install.sh"))
         manifest = json.loads((output / "release.json").read_text())
@@ -109,8 +119,11 @@ class ReleaseTest(unittest.TestCase):
             digest = hashlib.sha256(self.binary).hexdigest()
             self.assertEqual(manifest["platforms"][platform], digest)
             self.assertEqual((output / ("magic-" + platform + ".sha256")).read_text(), digest + "  magic\n")
-        self.assertIn(manifest["release"], (output / "install.sh").read_text())
-        self.assertNotIn("@RELEASE@", (output / "install.sh").read_text())
+        signed = release.verify_envelope((output / "manifest.json").read_bytes(), self.configuration)
+        self.assertEqual(signed["release"], manifest["release"])
+        self.assertEqual(signed["platforms"], manifest["platforms"])
+        self.assertEqual((output / "install.sh").read_text(), release.render_installer(self.configuration))
+        self.assertTrue(any(str(output / "manifest.json") in call.args[0] for call in process.run.call_args_list[-3:]))
 
     def test_failed_artifact_upload_does_not_promote_release(self):
         import types
@@ -121,61 +134,91 @@ class ReleaseTest(unittest.TestCase):
             check_output=mock.Mock(side_effect=["a" * 40, b"", f"magic {publisher.cli_version.current(publisher.ROOT)}"]),
             CalledProcessError=subprocess.CalledProcessError, DEVNULL=subprocess.DEVNULL,
         )
-        with mock.patch("sys.argv", ["publish-cli.py", "--skip-build", "--artifacts", str(self.root), "--output", str(self.root / "output")]), \
+        with mock.patch("sys.argv", ["publish-cli.py", "--skip-build", "--artifacts", str(self.root), "--output", str(self.root / "output"), "--signing-key", str(self.private)]), \
                 mock.patch.object(publisher, "subprocess", process), \
                 mock.patch.object(publisher, "release_objects", return_value=[]), \
-                mock.patch.object(publisher, "prune_releases"):
+                mock.patch.object(publisher, "prune_releases"), \
+                mock.patch.object(release, "trust", return_value=self.configuration), \
+                mock.patch.object(release, "verify_notarization"), \
+                mock.patch.object(release, "verify_bootstrap"):
             with self.assertRaises(subprocess.CalledProcessError):
                 publisher.main()
         for call in process.run.call_args_list:
-            self.assertNotIn(call.args[0][4].rsplit("/", 1)[-1], ("latest.json", "install.sh"))
+            self.assertNotIn(call.args[0][4].rsplit("/", 1)[-1], ("latest.signed.json", "latest.json", "install.sh"))
 
-    def test_checksum_installer_preserves_existing_binary_on_mismatch(self):
-        home = self.root / "checksum-home"
-        target = home / ".local/bin"
-        target.mkdir(parents=True)
-        (target / "magic").write_bytes(b"existing installation")
-        fixture = self.root / "checksum-fixture"
-        fixture.mkdir()
-        (fixture / "binary").write_bytes(b'#!/bin/sh\ntouch "$HOME/executed"\n')
-        (fixture / "checksum").write_text("0" * 64 + "  magic\n")
-        tools = self.root / "checksum-tools"
-        tools.mkdir()
-        (tools / "uname").write_text('#!/bin/sh\n[ "$1" = -s ] && echo Linux || echo x86_64\n')
-        (tools / "curl").write_text(
-            '#!/bin/sh\n'
-            'case "$2" in\n'
-            '  *.sha256) cp "$FIXTURE_DIR/checksum" "$4";;\n'
-            '  */releases/*) cp "$FIXTURE_DIR/binary" "$4";;\n'
-            '  *)\n'
-            '    test "$*" = "-q -fsS --max-time 2 -o /dev/null -X POST -H X-MagicMtn-Installer: shell https://magicmtn.ai/install-completed" || exit 2\n'
-            '    cmp "$HOME/.local/bin/magic" "$FIXTURE_DIR/binary" || exit 2\n'
-            '    echo reported >> "$HOME/install-events"\n'
-            '    exit 22;;\n'
-            'esac\n'
-        )
-        for tool in tools.iterdir():
-            tool.chmod(0o755)
-        script = self.root / "checksum-install.sh"
-        script.write_text((publisher.ROOT / "scripts/install-checksum.sh").read_text().replace("@RELEASE@", "test-release"))
-        env = {**os.environ, "HOME": str(home), "FIXTURE_DIR": str(fixture), "PATH": str(tools) + os.pathsep + os.environ["PATH"]}
-        result = subprocess.run(["sh", str(script), "--no-modify-shell"], env=env, capture_output=True)
-        self.assertNotEqual(result.returncode, 0)
-        self.assertEqual((target / "magic").read_bytes(), b"existing installation")
-        self.assertFalse((home / "executed").exists())
-        self.assertFalse((home / "install-events").exists())
-        (fixture / "binary").write_bytes(self.binary)
-        (fixture / "checksum").write_text(hashlib.sha256(self.binary).hexdigest() + "  magic\n")
-        result = subprocess.run(["sh", str(script), "--no-modify-shell"], env=env, capture_output=True)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual((target / "magic").read_bytes(), self.binary)
-        self.assertEqual((home / "install-events").read_text(), "reported\n")
-        (target / "magic").unlink()
-        (target / "magic").mkdir()
-        result = subprocess.run(["sh", str(script), "--no-modify-shell"], env=env, capture_output=True)
-        self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(list((target / "magic").iterdir()), [])
-        self.assertEqual((home / "install-events").read_text(), "reported\n")
+    def test_publication_fails_before_upload_when_signing_or_notarization_fails(self):
+        for platform in publisher.PLATFORMS:
+            (self.root / ("magic-" + platform)).write_bytes(self.binary)
+        for gate in ("missing-key", "wrong-key", "notarization", "bootstrap"):
+            with self.subTest(gate=gate):
+                process = types.SimpleNamespace(
+                    run=mock.Mock(), check_output=mock.Mock(side_effect=["a" * 40, b"", f"magic {publisher.cli_version.current(publisher.ROOT)}"]),
+                    CalledProcessError=subprocess.CalledProcessError, DEVNULL=subprocess.DEVNULL,
+                )
+                signing_key = self.private
+                if gate == "wrong-key":
+                    signing_key = self.root / "other-key.pem"
+                    signing_key.write_bytes(release.command("openssl", "genpkey", "-algorithm", "EC", "-pkeyopt", "ec_paramgen_curve:P-256").stdout)
+                arguments = ["publish-cli.py", "--skip-build", "--artifacts", str(self.root), "--output", str(self.root / "output")]
+                if gate != "missing-key":
+                    arguments += ["--signing-key", str(signing_key)]
+                with mock.patch("sys.argv", arguments), mock.patch.dict(os.environ, {"MAGICMTN_RELEASE_SIGNING_KEY_FILE":""}), \
+                        mock.patch.object(publisher, "subprocess", process), \
+                        mock.patch.object(release, "trust", return_value=self.configuration), \
+                        mock.patch.object(release, "verify_notarization", side_effect=ValueError("notarization failed") if gate == "notarization" else None), \
+                        mock.patch.object(release, "verify_bootstrap", side_effect=ValueError("bootstrap mismatch") if gate == "bootstrap" else None):
+                    with self.assertRaises((ValueError, subprocess.CalledProcessError)):
+                        publisher.main()
+                process.run.assert_not_called()
+
+    def test_metadata_renewal_preserves_release_identity_and_checks_source(self):
+        payload = {**self.payload, "release": publisher.cli_version.current(publisher.ROOT)}
+        signed = release.sign_payload(payload, self.private, self.configuration)
+        for dry_run in (True, False):
+            with mock.patch.object(publisher, "subprocess", types.SimpleNamespace(check_output=mock.Mock(return_value=signed), run=mock.Mock())) as process, \
+                    mock.patch.object(release, "trust", return_value=self.configuration), \
+                    mock.patch.object(release, "verify_bootstrap"), \
+                    mock.patch.object(release, "source_commit", return_value="a" * 40):
+                publisher.refresh_metadata(["aws"], self.root / "renewed", self.private, dry_run=dry_run)
+            if dry_run:
+                process.run.assert_not_called()
+            else:
+                process.run.assert_called_once()
+                self.assertEqual(process.run.call_args.args[0][4], f"s3://{publisher.BUCKET}/latest.signed.json")
+        renewed = release.verify_envelope((self.root / "renewed/manifest.json").read_bytes(), self.configuration)
+        for key in ("release", "source_commit", "platforms", "apple_team_id"):
+            self.assertEqual(renewed[key], payload[key])
+        with mock.patch.object(publisher, "subprocess", types.SimpleNamespace(check_output=mock.Mock(return_value=signed), run=mock.Mock())) as process, \
+                mock.patch.object(release, "trust", return_value=self.configuration), \
+                mock.patch.object(release, "source_commit", return_value="b" * 40):
+            with self.assertRaisesRegex(ValueError, "published source"):
+                publisher.refresh_metadata(["aws"], self.root / "rejected", self.private)
+        process.run.assert_not_called()
+
+    def homebrew_formula(self, signed):
+        source = (publisher.ROOT / "release/cli-homebrew.yml").read_text()
+        source = source.split("python3 - <<'PY'\n", 1)[1].split("\n                  PY", 1)[0]
+        program = textwrap.dedent(source).split("def github(", 1)[0]
+        def fetch(url, **kwargs):
+            response = mock.MagicMock()
+            response.__enter__.return_value = response
+            response.geturl.return_value = url
+            response.read.return_value = release.render_installer(self.configuration).encode() if url.endswith("/install.sh") else signed.encode()
+            return response
+        namespace = {}
+        with mock.patch.dict(os.environ, {"RELEASE_URL": release.DOWNLOADS}), \
+                mock.patch.object(release.urllib.request, "urlopen", side_effect=fetch):
+            exec(compile(program, "cli-homebrew.yml", "exec"), namespace)
+        return namespace["formula"].decode()
+
+    def test_homebrew_authenticates_metadata_with_the_independent_bootstrap_key(self):
+        formula = self.homebrew_formula(self.signed)
+        self.assertIn('version "1.1.2"', formula)
+        self.assertIn('version_scheme 2', formula)
+        self.assertIn(hashlib.sha256(self.binary).hexdigest(), formula)
+        for invalid in (json.dumps(self.payload), self.signed.replace('"signature":"', '"signature":"AAAA')):
+            with self.assertRaises((ValueError, KeyError, subprocess.CalledProcessError)):
+                self.homebrew_formula(invalid)
 
     def test_bootstrap_must_match_the_independent_application_deployment(self):
         for body, location in [(b"attacker", release.INSTALLER_URL), (release.render_installer(self.configuration).encode(), "https://untrusted.example/install.sh")]:
@@ -231,12 +274,12 @@ class ReleaseTest(unittest.TestCase):
         tools = self.root / "tools"
         tools.mkdir(exist_ok=True)
         (tools / "uname").write_text("#!/bin/sh\n[ \"$1\" = -s ] && echo Linux || echo x86_64\n")
-        (tools / "curl").write_text("#!/bin/sh\ncase \"$2\" in */latest.json) cp \"$FIXTURE_DIR/latest.json\" \"$4\";; */releases/test-release/magic-linux-x86_64) cp \"$FIXTURE_DIR/binary\" \"$4\";; *) exit 5;; esac\n")
+        (tools / "curl").write_text("#!/bin/sh\ncase \"$2\" in */latest.signed.json) cp \"$FIXTURE_DIR/latest.signed.json\" \"$4\";; */releases/1.1.2/magic-linux-x86_64) cp \"$FIXTURE_DIR/binary\" \"$4\";; *) exit 5;; esac\n")
         for path in tools.iterdir():
             path.chmod(0o755)
         fixture = self.root / "fixture"
         fixture.mkdir(exist_ok=True)
-        (fixture / "latest.json").write_text(self.signed if signed is None else signed)
+        (fixture / "latest.signed.json").write_text(self.signed if signed is None else signed)
         (fixture / "binary").write_bytes(self.binary if binary is None else binary)
         script = self.root / "install.sh"
         script.write_text(release.render_installer(self.configuration))

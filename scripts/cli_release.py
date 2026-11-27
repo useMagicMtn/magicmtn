@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Shared, non-interactive CLI release signing and verification commands."""
 import argparse
+import cli_version
 import base64
-import datetime
 import hashlib
 import json
 import os
@@ -57,20 +57,22 @@ def trust(path=TRUST):
     return value
 
 
-def validate_payload(payload, now=None):
+def validate_payload(payload, now=None, allow_expired=False):
     now = int(time.time()) if now is None else now
     fields = {"schema", "release", "channel", "source_commit", "issued_at", "expires_at", "platforms", "apple_team_id"}
     if not isinstance(payload, dict) or set(payload) != fields:
         raise ValueError("Invalid signed release metadata fields")
     if type(payload.get("schema")) is not int or payload.get("schema") != 1 or payload.get("channel") not in CHANNELS:
         raise ValueError("Unsupported signed release schema or channel")
-    if not isinstance(payload.get("release"), str) or not re.fullmatch(r"[A-Za-z0-9-]{1,100}", payload["release"]):
+    if not isinstance(payload.get("release"), str) or not re.fullmatch(r"[A-Za-z0-9.-]{1,100}", payload["release"]):
         raise ValueError("Invalid signed release identifier")
+    if payload["channel"] == "stable":
+        cli_version.parse(payload["release"])
     if not isinstance(payload.get("source_commit"), str) or not re.fullmatch(r"[0-9a-f]{40}", payload["source_commit"]):
         raise ValueError("A signed release must identify its source commit")
     issued, expires = payload.get("issued_at"), payload.get("expires_at")
     if (type(issued) is not int or type(expires) is not int
-            or issued > now + 300 or expires <= now
+            or issued > now + 300 or (expires <= now and not allow_expired)
             or not 0 < expires - issued <= MAX_LIFETIME):
         raise ValueError("Signed release metadata is expired or has invalid dates")
     hashes = payload.get("platforms", {})
@@ -81,7 +83,7 @@ def validate_payload(payload, now=None):
     return payload
 
 
-def verify_envelope(data, configuration, now=None):
+def verify_envelope(data, configuration, now=None, allow_expired=False):
     envelope = json.loads(data)
     if not isinstance(envelope, dict) or set(envelope) != {"payload", "signature"}:
         raise ValueError("A signed release envelope is required; unsigned releases are rejected")
@@ -94,7 +96,8 @@ def verify_envelope(data, configuration, now=None):
         (directory / "signature").write_bytes(signature)
         command("openssl", "dgst", "-sha256", "-verify", directory / "public.pem",
                 "-signature", directory / "signature", directory / "payload")
-    parsed = validate_payload(json.loads(payload), now)
+    # Only publisher renewal permits expired, authenticated metadata.
+    parsed = validate_payload(json.loads(payload), now, allow_expired)
     if parsed.get("apple_team_id") != configuration["apple_team_id"]:
         raise ValueError("The signed release uses an unexpected Apple publisher")
     return parsed
@@ -108,6 +111,8 @@ def verify_artifacts(payload, directory):
 
 def sign_payload(payload, private_key, configuration):
     validate_payload(payload)
+    if Path(private_key).expanduser().resolve().is_relative_to(ROOT):
+        raise ValueError("Store the private signing key outside the repository")
     with tempfile.TemporaryDirectory(prefix="magic-release-sign-") as directory:
         directory = Path(directory)
         data = canonical(payload)
@@ -201,24 +206,23 @@ def notarize(binary, receipt_path, identity, configuration):
 
 
 def source_commit():
-    if command("git", "-C", ROOT, "status", "--porcelain").stdout.strip():
+    if command("jj", "diff", "--summary", "-r", "@", cwd=ROOT).stdout.strip():
         raise ValueError("Release source must be committed and clean")
-    return command("git", "-C", ROOT, "rev-parse", "HEAD").stdout.decode().strip()
+    return command("jj", "log", "-r", "@-", "--no-graph", "-T", "commit_id", cwd=ROOT).stdout.decode().strip()
 
 
 def prepare(directory, output, channel, configuration):
     directory, output = Path(directory), Path(output)
-    if channel not in CHANNELS:
-        raise ValueError("Unsupported release channel")
+    if channel != "stable":
+        raise ValueError("CLI publication uses the stable channel")
     verify_notarization(directory / "magic-darwin-arm64", directory / "notarization.json", configuration)
     hashes = {name: digest(directory / ("magic-" + name)) for name in PLATFORMS}
-    # Releases are built from a clean, identified source tree, including CI checkouts.
     source = source_commit()
     now = int(time.time())
-    release = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d") + "-" + channel + "-" + str(time.time_ns()) + "-" + hashlib.sha256(canonical(hashes)).hexdigest()[:12]
-    payload = {"schema": 1, "release": release, "channel": channel, "source_commit": source,
+    payload = {"schema": 1, "release": cli_version.current(ROOT), "channel": channel, "source_commit": source,
                "issued_at": now, "expires_at": now + MAX_LIFETIME, "platforms": hashes,
                "apple_team_id": configuration["apple_team_id"]}
+    validate_payload(payload)
     output.mkdir(parents=True, exist_ok=True)
     (output / "payload.json").write_bytes(canonical(payload))
     return payload

@@ -1,31 +1,50 @@
 # CLI distribution
 
-The Publish CLI binaries workflow uploads versioned binaries, checksums, and the Apache 2.0 license to S3. Its final upload replaces `install.sh`, which is served through `https://magicmtn.ai/install.sh`. The installer names a complete release and verifies the platform's checksum before installing.
+MagicMtn releases authenticate their metadata with an ECDSA P-256 key pinned in `release/cli-trust.json`. The CLI embeds that key, and the application renders the bootstrap installer with the same key. The public installer is served independently of the download bucket at `https://magicmtn.ai/install.sh`.
 
-An S3 Object Created event for `install.sh` starts the `magicmtn-cli-homebrew` CodeBuild project. The build reads the release named in the installer, checks that the manifest and installer agree on the Apple Silicon checksum, and updates `Formula/magic.rb` in [UseMagicMtn/homebrew-tap](https://github.com/UseMagicMtn/homebrew-tap) through GitHub's signing API. It checks the resulting commit signature. The formula fetches the same immutable binary as the shell installer. Repeated events for the current release leave the formula untouched.
+The publisher verifies Apple Developer ID signing and notarization, signs the release's version, source commit, platform hashes, publisher identity, and validity period, then uploads immutable artifacts. It promotes the signed envelope to `latest.signed.json` only after the artifacts are available. The publisher also maintains `latest.json` in its original format so existing CLIs can upgrade to this verification path. Installation and `magic update` verify the signature, publisher, validity period, and executable hash before executing the download. macOS also verifies the binary's Apple signing identity.
 
-## Deploy the Homebrew sync
-
-Create a private GitHub App in the UseMagicMtn organization with webhooks disabled and **Contents** set to **Read and write**. Install the app on `UseMagicMtn/homebrew-tap` only. Generate a private key and obtain the app's client ID and installation ID. In AWS Systems Manager Parameter Store in `us-east-2`, create a `SecureString` named `/magicmtn/cli/homebrew-github-app` with a JSON object containing `client_id`, `installation_id`, and `private_key`. The `private_key` value is the full PEM string.
-
-Deploy the stack from the repository root.
+Run the release checks from the repository root:
 
 ```sh
-aws cloudformation deploy --region us-east-2 --stack-name magicmtn-cli-homebrew \
-  --template-file release/cli-homebrew.yml --capabilities CAPABILITY_IAM
+python3 -m unittest discover -s scripts -p 'test_cli*.py'
+cargo test --locked -p magicmtn-cli --bin magic release::tests
+cargo test --locked -p magicmtn-cli --bin magic update::tests
 ```
 
-Enable EventBridge delivery on the release bucket by adding `"EventBridgeConfiguration": {}` to its existing notification configuration. Preserve the other notification destinations when applying the configuration.
+## Configure the publisher
 
-Start the project to sync the current release after setup or to replay a missed event. The build logs are in the `/aws/codebuild/magicmtn-cli-homebrew` CloudWatch log group.
+Generate a release key outside the checkout, supplying your ten-character Apple Developer team ID:
 
 ```sh
-aws codebuild start-build --region us-east-2 --project-name magicmtn-cli-homebrew
+python3 scripts/cli_release.py keygen --private-key /secure/path/magicmtn-release.pem --apple-team-id YOURTEAMID
+python3 scripts/cli_release.py check-trust
 ```
 
+Keep the private key in your signing system and commit only `release/cli-trust.json`. Source builds use that public trust configuration. Changes to the pinned key require a coordinated installer and CLI rollout.
 
-## Verify an authenticated release
+For a local release, set `MAGICMTN_RELEASE_SIGNING_KEY_FILE` to the private-key path. Set `MAGICMTN_APPLE_SIGNING_IDENTITY` to your Developer ID Application identity. Supply notarization access through `MAGICMTN_NOTARY_KEYCHAIN_PROFILE`, or through `MAGICMTN_NOTARY_KEY_FILE`, `MAGICMTN_NOTARY_KEY_ID`, and `MAGICMTN_NOTARY_ISSUER`.
 
-Before promoting the signed installer, configure the release public key and Apple team ID in `release/cli-trust.json`. Build from the exact source commit and verify the Developer ID signature and Apple notarization. Publish the signed manifest and deploy the matching bootstrap installer together. Test anonymous installation on Apple silicon and both Linux architectures before linking to it from the README. Test Homebrew without GitHub credentials before advertising that install path.
+The GitHub release workflow uses the `cli-release` environment. Configure `CLI_RELEASE_SIGNING_KEY_PEM`, `APPLE_CERTIFICATE_P12_BASE64`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_NOTARY_KEY_P8`, `APPLE_NOTARY_KEY_ID`, and `APPLE_NOTARY_ISSUER` as environment secrets. Its temporary signing keychain and credential files are deleted after the signing step.
 
-Include the project license and applicable third-party notices with distributed artifacts. For source builds, follow [the README](../README.md#install-from-source).
+## Publish and renew metadata
+
+Build and publish from clean, committed source on Apple Silicon macOS:
+
+```sh
+python3 scripts/publish-cli.py --aws-profile magicmtn
+```
+
+For prebuilt artifacts, notarize `dist/bin/magic-darwin-arm64` with `scripts/cli_release.py notarize --binary dist/bin/magic-darwin-arm64 --receipt dist/bin/notarization.json`, then pass `--skip-build` to the publisher. The publisher independently checks Apple's acceptance before uploading. `--dry-run` prepares and authenticates the release without uploading or deleting objects.
+
+Signed metadata is valid for fourteen days. Renew it before expiration from a clean checkout of the published source commit:
+
+```sh
+python3 scripts/publish-cli.py --refresh-metadata --aws-profile magicmtn
+```
+
+Renewal authenticates the existing manifest and checks its version and source commit before signing fresh validity dates. It updates only `latest.signed.json`; the version, binary hashes, and immutable release artifacts stay the same. Serialize renewal with release publication.
+
+## Homebrew
+
+The Homebrew synchronizer reads the publisher key from the independently served bootstrap, verifies the signed manifest, and generates the formula from its authenticated version and macOS checksum. The formula downloads the same immutable artifact as the installer and updater.

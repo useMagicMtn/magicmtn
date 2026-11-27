@@ -19,6 +19,7 @@ mod mode;
 mod opencode;
 mod pi;
 mod provider_registry;
+mod release;
 mod sandbox_scp;
 mod sandbox_shell;
 mod telemetry;

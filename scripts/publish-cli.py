@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build and publish standalone CLI binaries with SHA-256 checksums."""
+"""Build and publish authenticated standalone CLI releases."""
 import argparse
 import datetime
 import hashlib
@@ -9,13 +9,14 @@ from pathlib import Path
 import shutil
 import subprocess
 import cli_version
+import cli_release as release
 
 ROOT = Path(__file__).resolve().parents[1]
 BUCKET = "magicmtn-cli-993499103295"
 PLATFORMS = ("darwin-arm64", "linux-x86_64", "linux-arm64")
 
 
-def prepare(artifacts, output, channel):
+def prepare(artifacts, output, channel, signing_key=None):
     if channel != "stable":
         raise ValueError("CLI publication uses the stable channel")
     version = cli_version.current(ROOT)
@@ -34,14 +35,24 @@ def prepare(artifacts, output, channel):
     actual = subprocess.check_output([str((artifacts / "magic-darwin-arm64").resolve()), "--version"], text=True).strip()
     if actual != "magic " + version:
         raise ValueError(f"Built CLI reports {actual!r}; expected magic {version}")
+    configuration = release.trust()
+    signing_key = signing_key or os.environ.get("MAGICMTN_RELEASE_SIGNING_KEY_FILE")
+    if not signing_key:
+        raise ValueError("Supply --signing-key or MAGICMTN_RELEASE_SIGNING_KEY_FILE")
+    release.verify_notarization(artifacts / "magic-darwin-arm64", artifacts / "notarization.json", configuration)
+    now = int(datetime.datetime.now(datetime.timezone.utc).timestamp())
+    payload = {"schema": 1, "release": identifier, "channel": channel, "source_commit": source,
+               "issued_at": now, "expires_at": now + release.MAX_LIFETIME,
+               "platforms": hashes, "apple_team_id": configuration["apple_team_id"]}
+    signed = release.sign_payload(payload, signing_key, configuration)
     output.mkdir(parents=True, exist_ok=True)
+    (output / "manifest.json").write_text(signed)
     (output / "release.json").write_text(json.dumps(manifest, indent=2) + "\n")
     shutil.copyfile(ROOT / "LICENSE", output / "LICENSE")
     for platform, digest in hashes.items():
         (output / ("magic-" + platform + ".sha256")).write_text(digest + "  magic\n")
     (output / "SHA256SUMS").write_text("".join(digest + "  magic-" + platform + "\n" for platform, digest in hashes.items()))
-    installer = (ROOT / "scripts/install-checksum.sh").read_text()
-    (output / "install.sh").write_text(installer.replace("@RELEASE@", identifier))
+    (output / "install.sh").write_text(release.render_installer(configuration))
     return manifest
 
 
@@ -70,7 +81,7 @@ def validate_publication(version, objects):
 
 
 def prune_releases(aws, current):
-    latest = json.loads(subprocess.check_output([*aws, "s3", "cp", f"s3://{BUCKET}/latest.json", "-", "--region", "us-east-2"], text=True))
+    latest = release.verify_envelope(subprocess.check_output([*aws, "s3", "cp", f"s3://{BUCKET}/latest.signed.json", "-", "--region", "us-east-2"], text=True), release.trust())
     if latest["release"] != current:
         raise ValueError("Current release is not the live latest release; refusing retention cleanup")
     objects = release_objects(aws)
@@ -93,27 +104,55 @@ def prune_releases(aws, current):
                         "--region", "us-east-2", "--only-show-errors"], check=True)
 
 
+def refresh_metadata(aws, output, signing_key, dry_run=False):
+    configuration = release.trust()
+    if not signing_key:
+        raise ValueError("Supply --signing-key or MAGICMTN_RELEASE_SIGNING_KEY_FILE")
+    data = subprocess.check_output([*aws, "s3", "cp", f"s3://{BUCKET}/latest.signed.json", "-", "--region", "us-east-2"], text=True)
+    payload = release.verify_envelope(data, configuration, allow_expired=True)
+    if payload["channel"] != "stable" or payload["release"] != cli_version.current(ROOT) or payload["source_commit"] != release.source_commit():
+        raise ValueError("Check out the published source commit before renewing release metadata")
+    now = int(datetime.datetime.now(datetime.timezone.utc).timestamp())
+    payload.update(issued_at=now, expires_at=now + release.MAX_LIFETIME)
+    signed = release.sign_payload(payload, signing_key, configuration)
+    output.mkdir(parents=True, exist_ok=True)
+    manifest = output / "manifest.json"
+    manifest.write_text(signed)
+    if not dry_run:
+        release.verify_bootstrap(configuration)
+        subprocess.run([*aws, "s3", "cp", str(manifest), f"s3://{BUCKET}/latest.signed.json", "--region", "us-east-2",
+                        "--content-type", "application/json", "--cache-control", "no-cache", "--only-show-errors"], check=True)
+    print("Renewed signed metadata for release " + payload["release"] + (" (dry run)" if dry_run else ""))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--refresh-metadata", action="store_true", help="Renew the current signed manifest from its clean source checkout without rebuilding or replacing release artifacts")
     parser.add_argument("--skip-build", action="store_true", help="Publish previously built and checked artifacts")
     parser.add_argument("--artifacts", type=Path, default=ROOT / "dist/bin")
     parser.add_argument("--output", type=Path, default=ROOT / "dist/public-release")
     parser.add_argument("--channel", choices=("stable",), default="stable")
     parser.add_argument("--aws-profile")
+    parser.add_argument("--signing-key", type=Path, default=os.environ.get("MAGICMTN_RELEASE_SIGNING_KEY_FILE"))
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
     os.environ["AWS_CLI_AUTO_PROMPT"] = "off"
     os.environ["AWS_PAGER"] = ""
+    aws = ["aws"] + (["--profile", args.aws_profile] if args.aws_profile else [])
+    if args.refresh_metadata:
+        refresh_metadata(aws, args.output, args.signing_key, args.dry_run)
+        return
     if not args.skip_build:
         for script in ("package-cli.sh", "package-cli-linux.sh", "check-cli-linux.sh"):
             subprocess.run(["sh", "scripts/" + script], cwd=ROOT, check=True)
         shutil.copy2(args.artifacts / "magic", args.artifacts / "magic-darwin-arm64")
-    payload = prepare(args.artifacts, args.output, args.channel)
+        configuration = release.trust()
+        release.notarize(args.artifacts / "magic-darwin-arm64", args.artifacts / "notarization.json",
+                         os.environ.get("MAGICMTN_APPLE_SIGNING_IDENTITY"), configuration)
+    payload = prepare(args.artifacts, args.output, args.channel, args.signing_key)
     if args.dry_run:
         print("Release prepared and checksums generated; no objects uploaded")
         return
-    aws = ["aws"] + (["--profile", args.aws_profile] if args.aws_profile else [])
-
     def upload(path, key, content_type, cache):
         if key.startswith("releases/"):
             subprocess.run([*aws, "s3api", "put-object", "--bucket", BUCKET, "--key", key,
@@ -125,6 +164,7 @@ def main():
                             "--region", "us-east-2", "--content-type", content_type,
                             "--cache-control", cache, "--only-show-errors"], check=True)
 
+    release.verify_bootstrap(release.trust())
     objects = release_objects(aws)
     validate_publication(payload["version"], objects)
     prefix = "releases/" + payload["release"] + "/"
@@ -135,8 +175,11 @@ def main():
         upload(args.output / (name + ".sha256"), prefix + name + ".sha256", "text/plain", immutable)
     upload(args.output / "SHA256SUMS", prefix + "SHA256SUMS", "text/plain", immutable)
     upload(args.output / "LICENSE", prefix + "LICENSE", "text/plain; charset=utf-8", immutable)
+    upload(args.output / "manifest.json", prefix + "manifest.json", "application/json", immutable)
     upload(args.output / "release.json", prefix + "release.json", "application/json", immutable)
     # Promote only after every immutable artifact has uploaded successfully.
+    upload(args.output / "manifest.json", "latest.signed.json", "application/json", "no-cache")
+    # Older CLIs read the original manifest shape to upgrade to signature enforcement.
     upload(args.output / "release.json", "latest.json", "application/json", "no-cache")
     upload(args.output / "install.sh", "install.sh", "text/plain; charset=utf-8", "no-cache")
     prune_releases(aws, payload["release"])

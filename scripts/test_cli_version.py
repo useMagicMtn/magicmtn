@@ -41,19 +41,19 @@ class VersionTest(unittest.TestCase):
     def test_retains_current_and_four_newest_completed_releases(self):
         objects = [{"Key": f"releases/1.0.{index}/release.json", "LastModified": f"2026-11-{index + 1:02d}"} for index in range(7)]
         objects.append({"Key": "releases/incomplete/magic-darwin-arm64", "LastModified": "2026-11-24"})
-        with mock.patch.object(publisher, "release_objects", return_value=objects), mock.patch.object(publisher.subprocess, "check_output", return_value='{"release":"1.0.6"}'), mock.patch.object(publisher.subprocess, "run") as run:
+        with mock.patch.object(publisher, "release_objects", return_value=objects), mock.patch.object(publisher.subprocess, "check_output", return_value='{"release":"1.0.6"}'), mock.patch.object(publisher.subprocess, "run") as run, mock.patch.object(publisher.release, "trust"), mock.patch.object(publisher.release, "verify_envelope", return_value={"release":"1.0.6"}):
             publisher.prune_releases(["aws"], "1.0.6")
         deleted = [call.args[0][3] for call in run.call_args_list]
         self.assertEqual(deleted, [f"s3://{publisher.BUCKET}/releases/{name}/" for name in ("1.0.0", "1.0.1", "incomplete")])
 
     def test_missing_current_metadata_prevents_any_deletion(self):
-        with mock.patch.object(publisher, "release_objects", return_value=[]), mock.patch.object(publisher.subprocess, "check_output", return_value='{"release":"1.0.0"}'), mock.patch.object(publisher.subprocess, "run") as run:
+        with mock.patch.object(publisher, "release_objects", return_value=[]), mock.patch.object(publisher.subprocess, "check_output", return_value='{"release":"1.0.0"}'), mock.patch.object(publisher.subprocess, "run") as run, mock.patch.object(publisher.release, "trust"), mock.patch.object(publisher.release, "verify_envelope", return_value={"release":"1.0.0"}):
             with self.assertRaises(ValueError):
                 publisher.prune_releases(["aws"], "1.0.0")
             run.assert_not_called()
 
     def test_stale_cleanup_cannot_delete_a_newer_promoted_release(self):
-        with mock.patch.object(publisher.subprocess, "check_output", return_value='{"release":"1.1.0"}'), mock.patch.object(publisher.subprocess, "run") as run:
+        with mock.patch.object(publisher.subprocess, "check_output", return_value='{"release":"1.1.0"}'), mock.patch.object(publisher.subprocess, "run") as run, mock.patch.object(publisher.release, "trust"), mock.patch.object(publisher.release, "verify_envelope", return_value={"release":"1.1.0"}):
             with self.assertRaisesRegex(ValueError, "live latest"):
                 publisher.prune_releases(["aws"], "1.0.0")
             run.assert_not_called()

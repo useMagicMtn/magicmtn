@@ -27,6 +27,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Verify release trust
+        run: python3 scripts/cli_release.py check-trust
       - name: Verify the committed Canonical release
         run: python3 scripts/publish-canonical-image.py --verify-lock
 
@@ -86,11 +88,48 @@ jobs:
         run: |
           cargo install --locked jj-cli --version 0.47.1
           jj git init --colocate
-      - name: Publish binaries and checksums
+      - name: Sign, notarize, and publish authenticated binaries
         env:
           RELEASE_CHANNEL: ${{ inputs.channel }}
+          MAGICMTN_RELEASE_SIGNING_KEY_PEM: ${{ secrets.CLI_RELEASE_SIGNING_KEY_PEM }}
+          APPLE_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          MAGICMTN_APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_NOTARY_KEY_P8: ${{ secrets.APPLE_NOTARY_KEY_P8 }}
+          MAGICMTN_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          MAGICMTN_NOTARY_ISSUER: ${{ secrets.APPLE_NOTARY_ISSUER }}
         run: |
+          set -eu
+          umask 077
+          signing_directory=$(mktemp -d "$RUNNER_TEMP/cli-signing.XXXXXX")
+          export SIGNING_DIRECTORY="$signing_directory"
+          keychain="$signing_directory/release.keychain-db"
+          trap 'security delete-keychain "$keychain" >/dev/null 2>&1 || :; rm -rf "$signing_directory"' EXIT
+          python3 - <<'PY'
+          import base64
+          import os
+          from pathlib import Path
+          directory = Path(os.environ["SIGNING_DIRECTORY"])
+          for name in ("MAGICMTN_RELEASE_SIGNING_KEY_PEM", "APPLE_CERTIFICATE_P12_BASE64", "APPLE_CERTIFICATE_PASSWORD", "MAGICMTN_APPLE_SIGNING_IDENTITY", "APPLE_NOTARY_KEY_P8", "MAGICMTN_NOTARY_KEY_ID", "MAGICMTN_NOTARY_ISSUER"):
+              if not os.environ.get(name):
+                  raise SystemExit("Missing release environment secret: " + name)
+          (directory / "release.pem").write_text(os.environ["MAGICMTN_RELEASE_SIGNING_KEY_PEM"])
+          (directory / "certificate.p12").write_bytes(base64.b64decode(os.environ["APPLE_CERTIFICATE_P12_BASE64"], validate=True))
+          (directory / "notary.p8").write_text(os.environ["APPLE_NOTARY_KEY_P8"])
+          PY
+          unset MAGICMTN_RELEASE_SIGNING_KEY_PEM APPLE_CERTIFICATE_P12_BASE64 APPLE_NOTARY_KEY_P8
+          keychain_password=$(openssl rand -hex 32)
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$signing_directory/certificate.p12" -k "$keychain" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          unset APPLE_CERTIFICATE_PASSWORD
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain" >/dev/null
+          security list-keychains -d user -s "$keychain" "$HOME/Library/Keychains/login.keychain-db"
+          export MAGICMTN_RELEASE_SIGNING_KEY_FILE="$signing_directory/release.pem"
+          export MAGICMTN_NOTARY_KEY_FILE="$signing_directory/notary.p8"
           cp dist/bin/magic dist/bin/magic-darwin-arm64
+          python3 scripts/cli_release.py notarize --binary dist/bin/magic-darwin-arm64 --receipt dist/bin/notarization.json
           python3 scripts/publish-cli.py --skip-build --channel "$RELEASE_CHANNEL"
           cp sdk/rust/magicmtn-sdk/src/canonical-image.json dist/public-release/canonical-image.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

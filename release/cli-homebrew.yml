@@ -4,7 +4,7 @@ Description: Sync the MagicMtn Homebrew formula when a CLI release is promoted i
 Parameters:
   ReleaseBucket:
     Type: String
-    Default: magicmtn-cli-beta-993499103295
+    Default: magicmtn-cli-993499103295
   GitHubAppParameter:
     Type: String
     Default: /magicmtn/cli/homebrew-github-app
@@ -95,30 +95,51 @@ Resources:
                   from urllib.request import Request, urlopen
 
                   base = os.environ["RELEASE_URL"]
-                  # The installer is uploaded last. Read its release even if latest.json
-                  # has already been updated by the next publication.
-                  with urlopen(base + "/install.sh", timeout=30) as response:
-                      installer = response.read().decode("utf-8")
-                  match = re.search(r"^release='((\d{8})-(?:alpha|beta|prerelease|stable)-(\d+))'$", installer, re.MULTILINE)
-                  if not match:
-                      raise ValueError("The public installer does not name a valid release")
-                  release, date, timestamp = match.groups()
+                  # Trust is delivered by the application, independently of the bucket.
+                  installer_url = "https://magicmtn.ai/install.sh"
+                  with urlopen(installer_url, timeout=30) as response:
+                      if response.geturl() != installer_url:
+                          raise ValueError("The bootstrap installer must be served independently")
+                      installer = response.read(32769).decode("utf-8")
+                  public_key = re.search(r"public_key=\$\(cat <<'MAGICMTN_PUBLIC_KEY'\n(-----BEGIN PUBLIC KEY-----\n[A-Za-z0-9+/=\n]+-----END PUBLIC KEY-----)\nMAGICMTN_PUBLIC_KEY", installer)
+                  team = re.search(r"^apple_team_id='([A-Z0-9]{10})'$", installer, re.MULTILINE)
+                  if not public_key or not team:
+                      raise ValueError("The bootstrap installer must pin the release publisher")
+                  with urlopen(base + "/latest.signed.json", timeout=30) as response:
+                      envelope = json.loads(response.read(32769))
+                  if set(envelope) != {"payload", "signature"}:
+                      raise ValueError("A signed release envelope is required")
+                  payload = base64.b64decode(envelope["payload"], validate=True)
+                  signature = base64.b64decode(envelope["signature"], validate=True)
+                  with tempfile.TemporaryDirectory() as temporary:
+                      from pathlib import Path
+                      temporary = Path(temporary)
+                      (temporary / "public.pem").write_text(public_key[1])
+                      (temporary / "payload").write_bytes(payload)
+                      (temporary / "signature").write_bytes(signature)
+                      subprocess.run(["openssl", "dgst", "-sha256", "-verify", str(temporary / "public.pem"), "-signature", str(temporary / "signature"), str(temporary / "payload")], check=True, capture_output=True)
+                  manifest = json.loads(payload)
+                  release = manifest["release"]
+                  now = int(time.time())
+                  if (manifest["schema"] != 1 or manifest["channel"] != "stable"
+                          or manifest["apple_team_id"] != team[1]
+                          or not re.fullmatch(r"(0|[1-9][0-9]*)[.](0|[1-9][0-9]*)[.](0|[1-9][0-9]*)", release)
+                          or not (manifest["issued_at"] <= now + 300
+                                  and manifest["expires_at"] > now
+                                  and 0 < manifest["expires_at"] - manifest["issued_at"] <= 1209600)):
+                      raise ValueError("Invalid signed release metadata")
                   directory = f"{base}/releases/{release}"
-                  with urlopen(directory + "/release.json", timeout=30) as response:
-                      manifest = json.load(response)
                   digest = manifest["platforms"]["darwin-arm64"]
-                  if manifest["release"] != release or not re.fullmatch(r"[0-9a-f]{64}", digest):
-                      raise ValueError("Invalid macOS release metadata")
-                  with urlopen(directory + "/magic-darwin-arm64.sha256", timeout=30) as response:
-                      if response.read().decode("ascii").split() != [digest, "magic"]:
-                          raise ValueError("The installer and Homebrew checksums disagree")
+                  if not re.fullmatch(r"[0-9a-f]{64}", digest):
+                      raise ValueError("Invalid macOS release checksum")
 
                   formula = f"""# Generated from the promoted MagicMtn CLI release.
                   class Magic < Formula
                     desc "Command-line client for MagicMtn"
                     homepage "https://magicmtn.ai"
                     url "{directory}/magic-darwin-arm64", using: :nounzip
-                    version "{date}.{timestamp}"
+                    version "{release}"
+                    version_scheme 2
                     sha256 "{digest}"
 
                     depends_on :macos

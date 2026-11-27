@@ -40,7 +40,7 @@ for tool in curl openssl; do
 done
 printf '%s\n' "$public_key" > "$temporary/public.pem"
 printf 'Verifying MagicMtn release…\n'
-curl -fsSL "$base_url/latest.json" -o "$temporary/envelope.json"
+curl -fsSL "$base_url/latest.signed.json" -o "$temporary/envelope.json"
 # The publisher writes this canonical, single-line envelope. Both fields contain
 # only base64, so parsing does not require executing downloaded code or jq/Python.
 test "$(wc -l < "$temporary/envelope.json" | tr -d '[:space:]')" = 1
@@ -52,7 +52,7 @@ sed -n 's/^{"payload":"[A-Za-z0-9+/=]*","signature":"\([A-Za-z0-9+/=]*\)"}$/\1/p
 if ! openssl dgst -sha256 -verify "$temporary/public.pem" -signature "$temporary/signature" "$temporary/payload.json" >/dev/null 2>&1; then
   printf 'Error: the release signature is invalid; nothing was installed.\n' >&2; exit 1;
 fi
-release=$(sed -n 's/.*"release":"\([A-Za-z0-9-]*\)".*/\1/p' "$temporary/payload.json")
+release=$(sed -n 's/.*"release":"\([A-Za-z0-9.-]*\)".*/\1/p' "$temporary/payload.json")
 expected=$(sed -n 's/.*"'"$platform"'":"\([0-9a-f]\{64\}\)".*/\1/p' "$temporary/payload.json")
 issued=$(sed -n 's/.*"issued_at":\([0-9][0-9]*\).*/\1/p' "$temporary/payload.json")
 expires=$(sed -n 's/.*"expires_at":\([0-9][0-9]*\).*/\1/p' "$temporary/payload.json")
@@ -61,7 +61,7 @@ team=$(sed -n 's/.*"apple_team_id":"\([A-Z0-9]*\)".*/\1/p' "$temporary/payload.j
 grep -Eq '"schema":1([,}])' "$temporary/payload.json"
 test -n "$release" && test "${#release}" -le 100 && test "${#expected}" = 64
 test "$team" = "$apple_team_id"
-case "$channel" in alpha|beta|prerelease|stable) ;; *) printf 'Error: unsupported release channel.\n' >&2; exit 1 ;; esac
+case "$channel" in stable) ;; *) printf 'Error: unsupported release channel.\n' >&2; exit 1 ;; esac
 now=$(date -u +%s)
 test -n "$issued" && test -n "$expires"
 if ! { test "$issued" -le "$((now + 300))" && test "$expires" -gt "$now" && test "$expires" -gt "$issued" && test "$((expires - issued))" -le 1209600; }; then
@@ -81,9 +81,14 @@ if ! "$temporary/magic" --version; then
   printf 'Error: the downloaded CLI could not run; the existing installation has not been changed.\n' >&2
   exit 1
 fi
+if [ -d "$install_dir/magic" ]; then
+  printf 'Error: %s/magic is a directory.\n' "$install_dir" >&2; exit 1
+fi
 # Rename replaces an existing symlink without modifying its target.
 mv -f "$temporary/magic" "$install_dir/magic"
 printf '\nInstalled magic in %s\n' "$install_dir"
+curl -q -fsS --max-time 2 -o /dev/null -X POST \
+  -H 'X-MagicMtn-Installer: shell' https://magicmtn.ai/install-completed 2>/dev/null || :
 if [ "$modify_shell" != no ]; then
   if [ "$modify_shell" = yes ]; then
     set -- --yes
