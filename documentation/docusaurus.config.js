@@ -7,7 +7,7 @@ const config = {
   baseUrl: '/docs/',
   trailingSlash: true,
   onBrokenLinks: 'throw',
-  plugins: [require.resolve('./plugins/link-policy')],
+  plugins: [require.resolve('./plugins/link-policy'), require.resolve('./plugins/llm-pages')],
   markdown: { mermaid: true, hooks: { onBrokenMarkdownLinks: 'throw' } },
   themes: ['@docusaurus/theme-mermaid', [require.resolve('@easyops-cn/docusaurus-search-local'), {
     hashed: 'filename',
