@@ -301,9 +301,9 @@ class ReleaseTest(unittest.TestCase):
         script = self.root / "install.sh"
         script.write_text(release.render_installer(self.configuration))
         env = {**os.environ, "HOME": str(home), "PATH": str(tools) + os.pathsep + os.environ["PATH"], "FIXTURE_DIR": str(fixture)}
-        env.pop("MAGIC_NO_ANALYTICS", None)
+        env.pop("MAGIC_NO_INSTALL_ANALYTICS", None)
         if no_analytics is not None:
-            env["MAGIC_NO_ANALYTICS"] = no_analytics
+            env["MAGIC_NO_INSTALL_ANALYTICS"] = no_analytics
         if directory:
             env["MAGIC_INSTALL_DIR"] = str(directory)
         result = subprocess.run(["sh", str(script), *([consent] if consent else [])], env=env, capture_output=True, text=True)

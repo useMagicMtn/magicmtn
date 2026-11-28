@@ -33,7 +33,7 @@ Run the installer on macOS or Linux.
 curl -fsSL https://magicmtn.ai/install.sh | sh
 ```
 
-The shell installer counts completed installs. To [opt out](documentation/docs/security.md#installation-count), run `curl -fsSL https://magicmtn.ai/install.sh | MAGIC_NO_ANALYTICS=1 sh`.
+The shell installer counts completed installs. To [opt out](documentation/docs/security.md#installation-count), run `curl -fsSL https://magicmtn.ai/install.sh | MAGIC_NO_INSTALL_ANALYTICS=1 sh`.
 
 On macOS, you can also use Homebrew.
 

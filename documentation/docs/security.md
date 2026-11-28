@@ -10,10 +10,10 @@ The sandbox backend supplies the execution boundary. Installed providers and the
 
 The shell installer sends an empty request after successful installation to increment an aggregate counter. Reinstallations count again. The event contains no user or installation identifier, OS, version, or command-usage data. The server receives normal HTTP connection metadata, including the source IP address. CLI error reporting is separately opt-in.
 
-Set `MAGIC_NO_ANALYTICS=1` for the installer to skip the count request:
+Set `MAGIC_NO_INSTALL_ANALYTICS=1` for the installer to skip the count request:
 
 ```sh
-curl -fsSL https://magicmtn.ai/install.sh | MAGIC_NO_ANALYTICS=1 sh
+curl -fsSL https://magicmtn.ai/install.sh | MAGIC_NO_INSTALL_ANALYTICS=1 sh
 ```
 
 ## Cloud credentials and the gateway {#credentials-and-the-gateway}

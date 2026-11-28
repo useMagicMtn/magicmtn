@@ -87,7 +87,7 @@ fi
 # Rename replaces an existing symlink without modifying its target.
 mv -f "$temporary/magic" "$install_dir/magic"
 printf '\nInstalled magic in %s\n' "$install_dir"
-if [ "${MAGIC_NO_ANALYTICS:-}" != 1 ]; then
+if [ "${MAGIC_NO_INSTALL_ANALYTICS:-}" != 1 ]; then
   curl -q -fsS --max-time 2 -o /dev/null -X POST \
     -H 'X-MagicMtn-Installer: shell' https://magicmtn.ai/install-completed 2>/dev/null || :
 fi
