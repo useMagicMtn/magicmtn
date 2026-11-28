@@ -2,6 +2,8 @@
 
 Start with the [local quickstart](docs/local-server.md) for a user workflow and the [Bazel guide](docs/bazel.md) for reusable engine and SDK targets.
 
+To install the CLI, follow [Install from source](README.md#install-from-source). To build a provider outside this checkout, copy the [standalone provider example](sdk/examples/minimal-provider/README.md).
+
 ## Build and test
 
 Install Rust 1.100.0 and Bazelisk. Run these checks from the repository root.
