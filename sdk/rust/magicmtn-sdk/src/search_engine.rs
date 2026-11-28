@@ -19,6 +19,11 @@ use crate::BoxFuture;
 pub struct SearchRequest {
     /// Natural-language query. Must contain at least one non-whitespace character.
     pub query: String,
+    /// Optional keyword queries to guide retrieval for the natural-language
+    /// `query`. Backends may use these hints or search with `query` alone.
+    /// Empty lets the backend choose how to retrieve sources.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub search_queries: Vec<String>,
     /// Maximum number of results to return. Must be positive; defaults to 10.
     #[serde(default = "default_max_results")]
     pub max_results: u32,
@@ -41,6 +46,7 @@ impl SearchRequest {
     pub fn new(query: impl Into<String>) -> Self {
         Self {
             query: query.into(),
+            search_queries: vec![],
             max_results: default_max_results(),
             include_domains: vec![],
             exclude_domains: vec![],

@@ -9,11 +9,28 @@ fn query_only_requests_have_portable_defaults_and_reject_unknown_options() {
     assert_eq!(request.max_results, 10);
     assert!(request.include_domains.is_empty());
     assert!(request.exclude_domains.is_empty());
+    assert!(request.search_queries.is_empty());
+    assert_eq!(
+        serde_json::to_value(&request).unwrap(),
+        json!({"query": "Rust async", "max_results": 10})
+    );
     assert!(serde_json::from_value::<SearchRequest>(json!({
         "query": "Rust async",
         "provider_option": true
     }))
     .is_err());
+}
+
+#[test]
+fn keyword_queries_round_trip_as_optional_retrieval_hints() {
+    let encoded = json!({
+        "query": "Find the airlines flying nonstop between Seattle and Tokyo.",
+        "max_results": 5,
+        "search_queries": ["Seattle Tokyo nonstop flights", "Seattle Haneda Narita airlines"]
+    });
+    let request: SearchRequest = serde_json::from_value(encoded.clone()).unwrap();
+    assert_eq!(request.search_queries.len(), 2);
+    assert_eq!(serde_json::to_value(request).unwrap(), encoded);
 }
 
 #[test]
