@@ -27,6 +27,7 @@ fn infer() -> Operation {
 fn package(checksum: bool, platform: bool) -> Vec<u8> {
     let exe = std::fs::read(executable()).unwrap();
     let package = Package {
+        runtime: None,
         name: "minimal".into(),
         version: "0.1.0".into(),
         protocol_version: PROTOCOL_VERSION,

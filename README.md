@@ -178,6 +178,17 @@ For OpenCode 2.3.2 or later, sign in with `magic login`, then run `magic agents 
 
 CLI [error reporting](docs/error-reporting.md) is opt-in.
 
+## Install from source
+
+Install Rust 1.100.0 or later and a C/C++ build toolchain (Xcode Command Line Tools on macOS, or GCC and Make on Linux). Download and extract the [source archive](https://github.com/useMagicMtn/magicmtn/archive/refs/heads/main.tar.gz), then run these commands from the extracted repository root:
+
+```sh
+cargo install --path cli --locked --bin magic
+magic --version
+```
+
+Cargo installs `magic` in `~/.cargo/bin`; add that directory to your PATH. To build a provider in a separate project, start with the [provider SDK example](sdk/examples/minimal-provider/README.md).
+
 ## Contribute
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) to build and test the engine and SDK. Read the [security model](documentation/docs/security.md) for sandbox boundaries and provider trust. Send vulnerability reports through the private channel in [SECURITY.md](SECURITY.md).

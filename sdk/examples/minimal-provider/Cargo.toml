@@ -8,14 +8,14 @@ publish = false
 [workspace]
 
 [dependencies]
-magicmtn-sdk = { version = "=0.1.0", path = "../../rust/magicmtn-sdk" }
-magicmtn-provider-framework = { version = "=0.1.0", path = "../../rust/magicmtn-provider-framework" }
+magicmtn-sdk = { git = "https://github.com/useMagicMtn/magicmtn", rev = "d2b5d7d6bca5c9a00324570cdce7d0320db9a14b" }
+magicmtn-provider-framework = { git = "https://github.com/useMagicMtn/magicmtn", rev = "d2b5d7d6bca5c9a00324570cdce7d0320db9a14b" }
 anyhow = "1"
 serde_json = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 
 [dev-dependencies]
-magicmtn-provider-framework = { path = "../../rust/magicmtn-provider-framework", features = ["host"] }
+magicmtn-provider-framework = { git = "https://github.com/useMagicMtn/magicmtn", rev = "d2b5d7d6bca5c9a00324570cdce7d0320db9a14b", features = ["host"] }
 flate2 = "1"
 tar = "0.4"
 tempfile = "3"
