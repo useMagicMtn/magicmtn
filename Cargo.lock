@@ -2028,6 +2028,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tower",
+ "tracing",
  "tracing-subscriber",
  "uuid",
  "zeroize",

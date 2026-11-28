@@ -98,6 +98,12 @@ Run `magic server stop` before signing in to hosted MagicMtn with `magic login`.
 
 Stop the server before installing or uninstalling providers. Keep provider releases referenced by active sandboxes until those sandboxes are deleted.
 
+## Diagnose a Pi session
+
+The server terminal reports session failures and recovery with the session ID, operation, error category, and retry delay. Persistent failures retry with exponential backoff capped at 30 seconds. Diagnostics omit raw error messages, credentials, and conversation content.
+
+Run `magic pi status WORKSPACE_ID` to inspect a session. The `transport` and `error_category` fields identify a failed sandbox connection and clear after a successful exchange. Database inventory failures preserve existing session workers while the server retries; transport recovery reconnects to the existing sandbox and agent.
+
 ## Configuration
 
 | Setting                     | Purpose                                                                                                                  |
