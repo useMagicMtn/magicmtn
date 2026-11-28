@@ -268,9 +268,7 @@ async fn response(api: &Api, request: Value) -> Option<Value> {
     if request["jsonrpc"] != "2.0" || !request["method"].is_string() {
         return Some(error(id, -32600, "Invalid Request"));
     }
-    if request.get("id").is_none() {
-        return None;
-    }
+    request.get("id")?;
     let result = match request["method"].as_str().unwrap() {
         "initialize" => {
             let requested = request["params"]["protocolVersion"].as_str().unwrap_or("");

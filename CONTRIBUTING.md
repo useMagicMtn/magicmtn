@@ -10,6 +10,8 @@ Install Rust 1.100.0 and Bazelisk. Run these checks from the repository root.
 
 ```sh
 cargo check --workspace --all-targets --locked
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
 bazel test //...
 ```
@@ -17,6 +19,8 @@ bazel test //...
 Cargo uses a three-day cooldown when selecting newly published dependency versions.
 
 For changes to the Pi extension, use Node.js 24 and run `npm ci --prefix interfaces/pi --ignore-scripts` followed by `npm --prefix interfaces/pi test`. For runtime changes, install `runtime/requirements.txt` into a Python 3.13 virtual environment and run `python -m unittest discover -s runtime/tests`. The [runtime CI workflow](.github/workflows/sandbox-runtime.yml) shows how to exercise the real Pi and OpenCode binaries.
+
+The [quality workflow](.github/workflows/quality.yml) also runs `npm --prefix runtime test`, `npm --prefix documentation test`, and the documentation build after installing their locked dependencies with `npm ci --prefix DIRECTORY --ignore-scripts`. The [security workflow](.github/workflows/security.yml) reviews dependency changes in pull requests for high and critical advisories and scans repository history for secrets with redacted output. Secret scanning also runs weekly.
 
 ## Web dashboard
 

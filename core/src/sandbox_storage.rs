@@ -89,6 +89,10 @@ impl Store {
             Self::Sqlite(db) => db.binding(id, reference, provider).await,
         }
     }
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Reserve a resource with its full placement and lifecycle policy"
+    )]
     pub async fn reserve(
         &self,
         id: Uuid,

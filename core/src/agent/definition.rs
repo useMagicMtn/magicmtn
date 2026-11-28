@@ -77,7 +77,7 @@ fn key(k: &str) -> Result<()> {
     }
     Ok(())
 }
-fn ids(ids: &mut Vec<Uuid>, default: Uuid) -> Result<()> {
+fn ids(ids: &mut [Uuid], default: Uuid) -> Result<()> {
     ids.sort_unstable();
     if ids.is_empty()
         || ids.iter().any(Uuid::is_nil)
@@ -138,6 +138,10 @@ async fn replay(
         None => Ok(None),
     }
 }
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Persist the complete revision receipt in the caller's transaction"
+)]
 async fn receipt(
     tx: &mut Transaction<'_, Postgres>,
     actor: Actor<'_>,
@@ -376,6 +380,10 @@ fn readiness(a: &Value) -> Option<&'static str> {
     }
     None
 }
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Keep activation inputs explicit within the caller's transaction"
+)]
 async fn activate_in(
     tx: &mut Transaction<'_, Postgres>,
     actor: Actor<'_>,
@@ -1151,7 +1159,7 @@ pub fn router<S: Clone + Send + Sync + 'static>(state: ConfigurationState) -> ax
         .with_state(state)
 }
 type Reply = std::result::Result<axum::Json<Value>, Failure>;
-fn authenticate<'a>(s: &ConfigurationState, h: &axum::http::HeaderMap) -> Result<Principal> {
+fn authenticate(s: &ConfigurationState, h: &axum::http::HeaderMap) -> Result<Principal> {
     s.auth.authenticate(h).map_err(|_| denied())
 }
 async fn create_http(
