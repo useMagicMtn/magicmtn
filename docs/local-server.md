@@ -4,7 +4,7 @@ Run sandboxes on your Mac through a single-user MagicMtn server. The server stor
 
 ## Prepare your machine
 
-Use an Apple silicon Mac with macOS 26 or later. Install the [MagicMtn CLI](../documentation/docs/cli-basics.md#install) and [Apple Container](https://github.com/apple/container#get-started). Start the container runtime:
+Install the [MagicMtn CLI](../documentation/docs/cli-basics.md#install) and [Apple Container](https://github.com/apple/container#get-started). Start the container runtime:
 
 ```sh
 container system start

@@ -43,7 +43,7 @@ See the [CLI installation guide](https://magicmtn.ai/docs/cli-basics/#install) f
 
 ### Run your first local sandbox
 
-Use an Apple silicon Mac with macOS 26 or later and [Apple Container](https://github.com/apple/container#get-started) installed.
+Install [Apple Container](https://github.com/apple/container#get-started).
 
 Start Apple Container and install the MagicMtn provider:
 
