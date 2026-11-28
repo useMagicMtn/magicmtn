@@ -178,7 +178,7 @@ CLI [error reporting](docs/error-reporting.md) is opt-in.
 
 ## Contribute
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) to build and test the engine and SDK. Send vulnerability reports through the private channel in [SECURITY.md](SECURITY.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md) to build and test the engine and SDK. Read the [security model](documentation/docs/security.md) for sandbox boundaries and provider trust. Send vulnerability reports through the private channel in [SECURITY.md](SECURITY.md).
 
 MagicMtn is licensed under the [Apache License 2.0](LICENSE).
 
