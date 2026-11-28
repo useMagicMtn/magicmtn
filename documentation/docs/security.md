@@ -60,10 +60,20 @@ For managed local Pi sessions, model requests pass through a loopback proxy insi
 
 ## Local sandbox networking
 
+### Apple Container
+
 Apple Container sandboxes use the `default` network with outbound access. To create local Apple Container sandboxes with networking and DNS disabled, start the server with:
 
 ```sh
 magic server start --network none
 ```
 
-The network choice is saved with each sandbox; restarting the server with another choice applies to new sandboxes. Model requests relayed by MagicMtn still reach the selected inference provider through the host. Choose that provider according to the data your agent will send for inference.
+The network choice is saved with each sandbox; restarting the server with another choice applies to new sandboxes.
+
+### Firecracker microVMs
+
+Firecracker microVMs use a host TAP interface assigned from the provider's configured network slots. Each concurrent VM needs its own TAP interface, MAC address, and guest IP. Configure host routing, NAT, and firewall rules to control guest access to the internet, the host, and other guests; configure DNS inside the guest.
+
+Keep host-to-guest SSH access available for provider command execution. The provider checks the guest's SSH host key against the configured `known_hosts` file. See the [Firecracker networking setup](https://github.com/useMagicMtn/provider-firecracker/blob/main/USAGE.md#host-and-guest-configuration) for network slots and SSH configuration.
+
+For either backend, model requests relayed by MagicMtn reach the selected inference provider through the host. Choose that provider according to the data your agent will send for inference.
