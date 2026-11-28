@@ -29,6 +29,8 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Verify release trust
         run: python3 scripts/cli_release.py check-trust
+      - name: Check release notes
+        run: python3 scripts/github-cli-release.py --check-notes
       - name: Verify the committed Canonical release
         run: python3 scripts/publish-canonical-image.py --verify-lock
 
@@ -70,10 +72,12 @@ jobs:
     timeout-minutes: 45
     environment: cli-release
     permissions:
-      contents: read
+      contents: write
       id-token: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: cli-linux
@@ -141,6 +145,10 @@ jobs:
           python3 scripts/cli_release.py notarize --binary dist/bin/magic-darwin-arm64 --receipt dist/bin/notarization.json
           python3 scripts/publish-cli.py --skip-build --channel "$RELEASE_CHANNEL"
           cp sdk/rust/magicmtn-sdk/src/canonical-image.json dist/public-release/canonical-image.json
+      - name: Publish GitHub release notes and download links
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/github-cli-release.py
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:

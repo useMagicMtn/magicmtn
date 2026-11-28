@@ -52,3 +52,9 @@ Renewal authenticates the existing manifest and checks its version and source co
 ## Homebrew
 
 The Homebrew synchronizer reads the publisher key from the independently served bootstrap, verifies the signed manifest, and generates the formula from its authenticated version and macOS checksum. The formula downloads the same immutable artifact as the installer and updater.
+
+## GitHub releases
+
+Write concise user-visible changes in `release/notes/VERSION.md` with each CLI version. The CLI publication workflow checks for notes before publishing and creates a GitHub release after successful publication. Its `vVERSION` tag points to the source commit authenticated by the signed manifest. Download links and checksums use the existing release bucket; its five-release retention policy also applies to these downloads.
+
+To add the currently published version to GitHub Releases, dispatch **Publish GitHub CLI release** with that version, or run `python3 scripts/github-cli-release.py --version VERSION` with an authenticated `gh` CLI. Add `--dry-run` to verify public metadata and preview notes without creating a tag or release. Matching releases are left intact; conflicting tags or release notes cause the command to fail.

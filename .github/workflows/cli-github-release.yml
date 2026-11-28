@@ -1,0 +1,31 @@
+name: Publish GitHub CLI release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Currently published stable CLI version
+        type: string
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cli-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Publish authenticated release notes and download links
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: python3 scripts/github-cli-release.py --version "$RELEASE_VERSION"
