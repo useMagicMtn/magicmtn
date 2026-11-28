@@ -1041,6 +1041,10 @@ pub async fn dispatch_store(
     .await
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Dispatch with the frozen resource identity and credential admission"
+)]
 pub(crate) async fn dispatch_prepared(
     store: &crate::sandbox_storage::Store,
     registry: &Registry,
@@ -1140,6 +1144,14 @@ async fn dispatch_once(
     registry
         .call_configured(&binding.pin, &scope, operation, timeout, Some(&environment))
         .await
+}
+
+/// Freeze non-secret local provider configuration with the connection snapshot.
+pub fn local_configuration(provider: &str) -> BTreeMap<String, String> {
+    configuration_keys(provider)
+        .iter()
+        .filter_map(|key| std::env::var(key).ok().map(|v| (key.to_string(), v)))
+        .collect()
 }
 
 #[cfg(test)]
@@ -1380,12 +1392,4 @@ mod tests {
         assert!(safe_environment_key("FIREWORKS_API_KEY"));
         assert!(!configuration_keys("fireworks").contains(&"FIREWORKS_API_KEY"));
     }
-}
-
-/// Freeze non-secret local provider configuration with the connection snapshot.
-pub fn local_configuration(provider: &str) -> BTreeMap<String, String> {
-    configuration_keys(provider)
-        .iter()
-        .filter_map(|key| std::env::var(key).ok().map(|v| (key.to_string(), v)))
-        .collect()
 }

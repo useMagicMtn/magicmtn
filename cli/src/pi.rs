@@ -588,6 +588,21 @@ fn detach_requested(bytes: &[u8]) -> bool {
                 .any(|window| window == *sequence)
         })
 }
+fn url_for_gateway(value: &str) -> Result<reqwest::Url> {
+    let url = reqwest::Url::parse(value)?;
+    ensure!(
+        url.scheme() == "https"
+            || (url.scheme() == "http"
+                && matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"))),
+        "gateway attachment requires HTTPS"
+    );
+    ensure!(
+        url.username().is_empty() && url.password().is_none() && url.fragment().is_none(),
+        "invalid gateway URL"
+    );
+    Ok(url)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -627,19 +642,4 @@ mod tests {
         assert!(!detach_requested("ordinary input 雪".as_bytes()));
         assert!(!detach_requested(b"\x1b[93u"));
     }
-}
-
-fn url_for_gateway(value: &str) -> Result<reqwest::Url> {
-    let url = reqwest::Url::parse(value)?;
-    ensure!(
-        url.scheme() == "https"
-            || (url.scheme() == "http"
-                && matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"))),
-        "gateway attachment requires HTTPS"
-    );
-    ensure!(
-        url.username().is_empty() && url.password().is_none() && url.fragment().is_none(),
-        "invalid gateway URL"
-    );
-    Ok(url)
 }

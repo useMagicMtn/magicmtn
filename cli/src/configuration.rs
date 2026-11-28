@@ -7,21 +7,13 @@ use std::{
     path::{Path, PathBuf},
 };
 
-#[derive(Deserialize)]
+#[derive(Default, Deserialize)]
 #[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
 struct Config {
     // Accepted for compatibility; server selection is owned by mode::Selection.
     #[serde(rename = "local-sandbox")]
     _local_sandbox: bool,
     error_reporting: bool,
-}
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            _local_sandbox: false,
-            error_reporting: false,
-        }
-    }
 }
 pub(crate) fn error_reporting() -> Result<bool> {
     Ok(read(&directory()?.join("config"))?.error_reporting)
@@ -53,6 +45,36 @@ fn creation_body_at(root: &Path, mut body: Value) -> Result<Value> {
     body["error_reporting"] = json!(config.error_reporting);
     Ok(body)
 }
+pub(crate) fn write_catalog(
+    registry: &magicmtn_provider_framework::host::Registry,
+    root: &Path,
+) -> Result<()> {
+    let releases: Vec<_> = registry.list()?.into_iter().map(|installed| {
+        let executable = root.join(&installed.package.name).join(&installed.package.version).join("provider");
+        let directory = executable.parent().unwrap();
+        let runtime_environment = installed.package.runtime.as_ref().map(|spec| spec.environment(directory)).transpose()?.unwrap_or_default();
+        Ok(json!({"package":installed.package,"manifest":installed.manifest,"active":installed.active,"executable":executable,"runtime_environment":runtime_environment}))
+    }).collect::<Result<Vec<_>>>()?;
+    let catalog = root.join("catalog.json");
+    let mut file = tempfile::NamedTempFile::new_in(root)?;
+    serde_json::to_writer_pretty(&mut file, &releases)?;
+    file.persist(&catalog)?;
+    Ok(())
+}
+
+/// Keep install/remove operations separate from running provider processes.
+pub(crate) fn lock_provider_store(root: &Path) -> Result<fs::File> {
+    fs::create_dir_all(root)?;
+    let lock = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(root.join(".lock"))?;
+    lock.try_lock().context("provider store is in use; stop the local runner before installing or uninstalling providers")?;
+    Ok(lock)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -118,34 +140,4 @@ mod tests {
             assert!(read(&path).is_err());
         }
     }
-}
-
-pub(crate) fn write_catalog(
-    registry: &magicmtn_provider_framework::host::Registry,
-    root: &Path,
-) -> Result<()> {
-    let releases: Vec<_> = registry.list()?.into_iter().map(|installed| {
-        let executable = root.join(&installed.package.name).join(&installed.package.version).join("provider");
-        let directory = executable.parent().unwrap();
-        let runtime_environment = installed.package.runtime.as_ref().map(|spec| spec.environment(directory)).transpose()?.unwrap_or_default();
-        Ok(json!({"package":installed.package,"manifest":installed.manifest,"active":installed.active,"executable":executable,"runtime_environment":runtime_environment}))
-    }).collect::<Result<Vec<_>>>()?;
-    let catalog = root.join("catalog.json");
-    let mut file = tempfile::NamedTempFile::new_in(root)?;
-    serde_json::to_writer_pretty(&mut file, &releases)?;
-    file.persist(&catalog)?;
-    Ok(())
-}
-
-/// Keep install/remove operations separate from running provider processes.
-pub(crate) fn lock_provider_store(root: &Path) -> Result<fs::File> {
-    fs::create_dir_all(root)?;
-    let lock = fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .read(true)
-        .write(true)
-        .open(root.join(".lock"))?;
-    lock.try_lock().context("provider store is in use; stop the local runner before installing or uninstalling providers")?;
-    Ok(lock)
 }

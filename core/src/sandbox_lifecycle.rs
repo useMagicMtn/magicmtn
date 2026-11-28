@@ -504,6 +504,92 @@ pub async fn run_store(store: Store, registry: Registry) {
     }
 }
 
+/// The lifecycle decision is shared; adapters only persist it atomically with
+/// lease validation and any host-specific attached session updates.
+pub(crate) struct Completion {
+    pub complete: bool,
+    pub delay: i32,
+    pub error: Option<String>,
+    pub observation: Option<(&'static str, bool, &'static str)>,
+}
+pub(crate) fn completion(ended: bool, attempts: i32, result: &Result<Observation>) -> Completion {
+    let mut out = Completion {
+        complete: ended,
+        delay: INSPECTION_SECONDS,
+        error: None,
+        observation: None,
+    };
+    if ended {
+        return out;
+    }
+    match result {
+        Ok(observation) => {
+            let observation = match observation {
+                Observation::Terminated => ("missing", true, "sandbox_terminated"),
+                Observation::State(SandboxState::Missing) => ("missing", true, "runtime_missing"),
+                Observation::State(SandboxState::Stopped) => ("stopped", false, "runtime_stopped"),
+                Observation::State(SandboxState::Running) => ("running", false, ""),
+            };
+            out.complete = observation.1;
+            out.observation = Some(observation);
+        }
+        Err(error) => {
+            out.error = Some(error.to_string().chars().take(1000).collect());
+            out.delay = (2_i32.saturating_pow(attempts.min(9) as u32)).clamp(2, 300);
+        }
+    }
+    out
+}
+impl Store {
+    pub async fn schedule(&self) -> Result<()> {
+        match self {
+            Self::Postgres(pool) => schedule(pool).await,
+            #[cfg(feature = "sqlite")]
+            Self::Sqlite(db) => db.schedule().await,
+        }
+    }
+    async fn claim(&self, id: Option<Uuid>) -> Result<Option<Job>> {
+        match self {
+            Self::Postgres(pool) => claim(pool, id).await,
+            #[cfg(feature = "sqlite")]
+            Self::Sqlite(db) => db.claim(id).await,
+        }
+    }
+    async fn fence_pin(&self, job: &Job, pin: &Pin) -> Result<()> {
+        let affected=match self {
+            Self::Postgres(pool)=>sqlx::query("UPDATE sandbox_lifecycle_jobs SET provider_pin=$3 WHERE sandbox_id=$1 AND lease_token=$2 AND lease_expires_at>clock_timestamp()").bind(job.id).bind(job.token).bind(serde_json::to_value(pin)?).execute(pool).await?.rows_affected(),
+            #[cfg(feature="sqlite")]
+            Self::Sqlite(db)=>db.fence_pin(job,pin).await?,
+        };
+        ensure!(affected == 1, "lifecycle lease fenced");
+        Ok(())
+    }
+    async fn finish(&self, job: &Job, result: &Result<Observation>) -> Result<bool> {
+        match self {
+            Self::Postgres(pool) => finish(pool, job, result).await,
+            #[cfg(feature = "sqlite")]
+            Self::Sqlite(db) => db.finish(job, result).await,
+        }
+    }
+}
+
+pub(crate) fn receipt_metadata(
+    sandbox: &ProviderSandbox,
+    binding: &crate::provider_connections::Binding,
+    scope: &str,
+) -> Value {
+    let mut metadata = sandbox
+        .metadata
+        .clone()
+        .unwrap_or_else(|| serde_json::json!({}));
+    metadata["provider"] = serde_json::json!(binding.pin.name);
+    metadata["backend_version"] = serde_json::json!(binding.pin.version);
+    metadata["_magicmtn_connection"] = serde_json::json!(binding);
+    metadata["_magicmtn_provider"] = serde_json::json!(binding.pin);
+    metadata["_magicmtn_scope"] = serde_json::json!(scope);
+    metadata
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -836,90 +922,4 @@ mod tests {
         assert_eq!(status(&pool, id3).await?, "ended");
         Ok(())
     }
-}
-
-/// The lifecycle decision is shared; adapters only persist it atomically with
-/// lease validation and any host-specific attached session updates.
-pub(crate) struct Completion {
-    pub complete: bool,
-    pub delay: i32,
-    pub error: Option<String>,
-    pub observation: Option<(&'static str, bool, &'static str)>,
-}
-pub(crate) fn completion(ended: bool, attempts: i32, result: &Result<Observation>) -> Completion {
-    let mut out = Completion {
-        complete: ended,
-        delay: INSPECTION_SECONDS,
-        error: None,
-        observation: None,
-    };
-    if ended {
-        return out;
-    }
-    match result {
-        Ok(observation) => {
-            let observation = match observation {
-                Observation::Terminated => ("missing", true, "sandbox_terminated"),
-                Observation::State(SandboxState::Missing) => ("missing", true, "runtime_missing"),
-                Observation::State(SandboxState::Stopped) => ("stopped", false, "runtime_stopped"),
-                Observation::State(SandboxState::Running) => ("running", false, ""),
-            };
-            out.complete = observation.1;
-            out.observation = Some(observation);
-        }
-        Err(error) => {
-            out.error = Some(error.to_string().chars().take(1000).collect());
-            out.delay = (2_i32.saturating_pow(attempts.min(9) as u32)).clamp(2, 300);
-        }
-    }
-    out
-}
-impl Store {
-    pub async fn schedule(&self) -> Result<()> {
-        match self {
-            Self::Postgres(pool) => schedule(pool).await,
-            #[cfg(feature = "sqlite")]
-            Self::Sqlite(db) => db.schedule().await,
-        }
-    }
-    async fn claim(&self, id: Option<Uuid>) -> Result<Option<Job>> {
-        match self {
-            Self::Postgres(pool) => claim(pool, id).await,
-            #[cfg(feature = "sqlite")]
-            Self::Sqlite(db) => db.claim(id).await,
-        }
-    }
-    async fn fence_pin(&self, job: &Job, pin: &Pin) -> Result<()> {
-        let affected=match self {
-            Self::Postgres(pool)=>sqlx::query("UPDATE sandbox_lifecycle_jobs SET provider_pin=$3 WHERE sandbox_id=$1 AND lease_token=$2 AND lease_expires_at>clock_timestamp()").bind(job.id).bind(job.token).bind(serde_json::to_value(pin)?).execute(pool).await?.rows_affected(),
-            #[cfg(feature="sqlite")]
-            Self::Sqlite(db)=>db.fence_pin(job,pin).await?,
-        };
-        ensure!(affected == 1, "lifecycle lease fenced");
-        Ok(())
-    }
-    async fn finish(&self, job: &Job, result: &Result<Observation>) -> Result<bool> {
-        match self {
-            Self::Postgres(pool) => finish(pool, job, result).await,
-            #[cfg(feature = "sqlite")]
-            Self::Sqlite(db) => db.finish(job, result).await,
-        }
-    }
-}
-
-pub(crate) fn receipt_metadata(
-    sandbox: &ProviderSandbox,
-    binding: &crate::provider_connections::Binding,
-    scope: &str,
-) -> Value {
-    let mut metadata = sandbox
-        .metadata
-        .clone()
-        .unwrap_or_else(|| serde_json::json!({}));
-    metadata["provider"] = serde_json::json!(binding.pin.name);
-    metadata["backend_version"] = serde_json::json!(binding.pin.version);
-    metadata["_magicmtn_connection"] = serde_json::json!(binding);
-    metadata["_magicmtn_provider"] = serde_json::json!(binding.pin);
-    metadata["_magicmtn_scope"] = serde_json::json!(scope);
-    metadata
 }
