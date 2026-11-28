@@ -22,12 +22,75 @@ use magicmtn_sdk::{
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::{sync::Arc, time::Duration};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 use uuid::Uuid;
 
 const RUNTIME: &str = include_str!("../runtime/pi.py");
 const SCRIPT: &str = "/computer/.magicmtn-local-pi.py";
 const LIMIT: usize = 16 * 1024 * 1024;
+
+// Never log error text here: provider errors can contain credentials or prompts.
+fn error_category(error: &anyhow::Error, fallback: &'static str) -> &'static str {
+    if error.downcast_ref::<sqlx::Error>().is_some() {
+        "database"
+    } else if error.downcast_ref::<serde_json::Error>().is_some()
+        || error.downcast_ref::<base64::DecodeError>().is_some()
+    {
+        "protocol"
+    } else {
+        fallback
+    }
+}
+
+struct Retry {
+    interval: Duration,
+    failures: u32,
+}
+
+impl Retry {
+    fn new(interval: Duration) -> Self {
+        Self {
+            interval,
+            failures: 0,
+        }
+    }
+
+    fn delay(
+        &mut self,
+        result: Result<()>,
+        session_id: Option<Uuid>,
+        operation: &'static str,
+    ) -> Duration {
+        match result {
+            Ok(()) => {
+                if self.failures > 0 {
+                    tracing::info!(
+                        ?session_id,
+                        operation,
+                        failures = self.failures,
+                        "Local Pi worker recovered"
+                    );
+                }
+                self.failures = 0;
+                self.interval
+            }
+            Err(error) => {
+                self.failures = self.failures.saturating_add(1);
+                let delay =
+                    (self.interval * (1_u32 << self.failures.min(8))).min(Duration::from_secs(30));
+                tracing::warn!(
+                    ?session_id,
+                    operation,
+                    category = error_category(&error, operation),
+                    failures = self.failures,
+                    retry_ms = delay.as_millis() as u64,
+                    "Local Pi worker failed; retrying"
+                );
+                delay
+            }
+        }
+    }
+}
 
 #[derive(Clone)]
 pub(crate) struct Service {
@@ -239,7 +302,7 @@ impl Service {
     async fn session(&self, id: Uuid) -> Result<Value> {
         let row: (String,String,String,i64,Value) = sqlx::query_as("SELECT model_id,provider,desired,generation,snapshot FROM local_pi_sessions WHERE id=?").bind(id.to_string()).fetch_one(&self.db.pool).await?;
         Ok(
-            json!({"id":id,"sandbox_id":id,"model_id":row.0,"provider":row.1,"desired":row.2,"generation":row.3,"status":row.4["status"].as_str().unwrap_or("starting"),"exit_code":row.4["exit_code"]}),
+            json!({"id":id,"sandbox_id":id,"model_id":row.0,"provider":row.1,"desired":row.2,"generation":row.3,"status":row.4["status"].as_str().unwrap_or("starting"),"exit_code":row.4["exit_code"],"transport":row.4["transport"],"error_category":row.4["error_category"]}),
         )
     }
     async fn exec(&self, id: Uuid, args: Vec<String>) -> Result<String> {
@@ -424,6 +487,7 @@ impl Service {
                 json!({"id":format!("chatcmpl-{request_id}"),"object":"chat.completion","created":0,"model":model["id"],"choices":[{"index":0,"message":result.output["message"],"finish_reason":result.output["finish_reason"].as_str().unwrap_or("stop")}],"usage":result.output["usage"]})
             }
             _ => {
+                tracing::warn!(session_id = %id, operation = "inference", category = "inference_provider", "Local Pi inference provider failed");
                 json!({"error":{"message":"The selected inference provider could not complete this turn","type":"provider_error"}})
             }
         };
@@ -521,7 +585,7 @@ impl Service {
                 .await?;
         if let Some(request_id) = snapshot["request"]["id"].as_str() {
             Uuid::parse_str(request_id)?;
-            let response = match self
+            let (response, failure) = match self
                 .infer(
                     id,
                     request_id,
@@ -531,58 +595,76 @@ impl Service {
                 )
                 .await
             {
-                Ok(response) => response,
-                Err(_) => {
-                    json!({"error":{"message":"The inference relay could not complete this turn","type":"relay_error"}})
-                }
+                Ok(response) => (response, None),
+                Err(error) => (
+                    json!({"error":{"message":"The inference relay could not complete this turn","type":"relay_error"}}),
+                    Some(error),
+                ),
             };
             let path = format!("~/.magicmtn/local-pi/{id}/{request_id}.response");
             self.upload(id, &path, &serde_json::to_vec(&response)?)
                 .await?;
             self.exchange(id, json!({"response_id":request_id})).await?;
+            if let Some(error) = failure {
+                return Err(error);
+            }
         }
         Ok(())
     }
     pub(crate) async fn run(self) {
-        let mut workers: std::collections::HashMap<Uuid, AbortOnDrop> =
-            std::collections::HashMap::new();
+        let mut workers = HashMap::new();
+        let mut retry = Retry::new(Duration::from_secs(1));
         loop {
-            let ids: Vec<String> =
-                sqlx::query_scalar("SELECT id FROM local_pi_sessions WHERE desired<>'terminated'")
-                    .fetch_all(&self.db.pool)
-                    .await
-                    .unwrap_or_default();
-            workers.retain(|id, _| ids.iter().any(|text| text == &id.to_string()));
-            for text in ids {
-                let Ok(id) = text.parse::<Uuid>() else {
-                    continue;
-                };
-                if workers.contains_key(&id) {
-                    continue;
-                }
-                let service = self.clone();
-                // AbortHandle's owner below cancels all session tasks on server shutdown.
-                let task = tokio::spawn(async move {
-                    let relay_service = service.clone();
-                    let _relay = AbortOnDrop(tokio::spawn(async move {
-                        loop {
-                            let _ = relay_service.relay(id).await;
-                            tokio::time::sleep(Duration::from_millis(250)).await;
-                        }
-                    }));
-                    loop {
-                        if service.tick(id).await.is_err() {
-                            // Keep the resource identity and conversation; transient transport
-                            // failures never create a replacement sandbox or agent.
-                            let _=sqlx::query("UPDATE local_pi_sessions SET snapshot=json_set(snapshot,'$.transport','unavailable') WHERE id=?").bind(id.to_string()).execute(&service.db.pool).await;
-                        }
-                        tokio::time::sleep(Duration::from_millis(200)).await;
-                    }
-                });
-                workers.insert(id, AbortOnDrop(task));
-            }
-            tokio::time::sleep(Duration::from_secs(1)).await;
+            let result = self.refresh_workers(&mut workers).await;
+            tokio::time::sleep(retry.delay(result, None, "session_inventory")).await;
         }
+    }
+
+    async fn refresh_workers(&self, workers: &mut HashMap<Uuid, AbortOnDrop>) -> Result<()> {
+        let ids: Vec<String> =
+            sqlx::query_scalar("SELECT id FROM local_pi_sessions WHERE desired<>'terminated'")
+                .fetch_all(&self.db.pool)
+                .await?;
+        // Validate the entire inventory before cancelling any existing workers.
+        let ids = ids
+            .iter()
+            .map(|id| id.parse::<Uuid>())
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        workers.retain(|id, _| ids.contains(id));
+        for id in ids {
+            workers.entry(id).or_insert_with(|| self.spawn_worker(id));
+        }
+        Ok(())
+    }
+
+    fn spawn_worker(&self, id: Uuid) -> AbortOnDrop {
+        let service = self.clone();
+        // Dropping a worker on termination or shutdown cancels both tasks.
+        AbortOnDrop(tokio::spawn(async move {
+            let relay_service = service.clone();
+            let _relay = AbortOnDrop(tokio::spawn(async move {
+                let mut retry = Retry::new(Duration::from_millis(250));
+                loop {
+                    let result = relay_service.relay(id).await;
+                    tokio::time::sleep(retry.delay(result, Some(id), "inference_relay")).await;
+                }
+            }));
+            let mut retry = Retry::new(Duration::from_millis(200));
+            loop {
+                let result = service.tick(id).await;
+                if let Err(error) = &result {
+                    let category = error_category(error, "sandbox_transport");
+                    // Preserve identity and conversation; never replace a sandbox
+                    // or agent in response to a transport failure.
+                    if let Err(error) = sqlx::query("UPDATE local_pi_sessions SET snapshot=json_set(snapshot,'$.transport','unavailable','$.error_category',?) WHERE id=?")
+                        .bind(category).bind(id.to_string()).execute(&service.db.pool).await
+                    {
+                        tracing::warn!(session_id = %id, operation = "save_transport_status", category = error_category(&error.into(), "database"), "Could not save local Pi transport status");
+                    }
+                }
+                tokio::time::sleep(retry.delay(result, Some(id), "sandbox_transport")).await;
+            }
+        }))
     }
     pub(crate) fn router(self) -> Router {
         Router::new()

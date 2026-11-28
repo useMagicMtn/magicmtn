@@ -8,6 +8,156 @@ use axum::{
 use magicmtn_provider_framework::host::Release;
 use tower::ServiceExt;
 
+#[test]
+fn retries_back_off_to_a_bound_and_reset_after_recovery() {
+    for interval in [200, 250, 1000] {
+        let mut retry = Retry::new(Duration::from_millis(interval));
+        let mut prior = Duration::ZERO;
+        for _ in 0..40 {
+            let delay = retry.delay(
+                Err(anyhow::anyhow!("private provider response")),
+                Some(Uuid::nil()),
+                "sandbox_transport",
+            );
+            assert!(delay > Duration::from_millis(interval));
+            assert!(delay >= prior);
+            assert!(delay <= Duration::from_secs(30));
+            prior = delay;
+        }
+        assert_eq!(prior, Duration::from_secs(30));
+        assert_eq!(
+            retry.delay(Ok(()), Some(Uuid::nil()), "sandbox_transport"),
+            Duration::from_millis(interval)
+        );
+        assert_eq!(
+            retry.delay(
+                Err(anyhow::anyhow!("another failure")),
+                Some(Uuid::nil()),
+                "sandbox_transport"
+            ),
+            Duration::from_millis(interval * 2)
+        );
+    }
+}
+
+#[test]
+fn diagnostics_classify_wrapped_errors_without_including_their_contents() {
+    let database = anyhow::Error::from(sqlx::Error::Protocol("secret database details".into()))
+        .context("private context");
+    assert_eq!(error_category(&database, "sandbox_transport"), "database");
+    let protocol = serde_json::from_str::<Value>("secret payload").unwrap_err();
+    assert_eq!(
+        error_category(&protocol.into(), "inference_relay"),
+        "protocol"
+    );
+    assert_eq!(
+        error_category(
+            &anyhow::anyhow!("token=secret prompt=private"),
+            "sandbox_transport"
+        ),
+        "sandbox_transport"
+    );
+}
+
+#[test]
+fn retry_logs_include_session_and_category_but_exclude_error_text() {
+    #[derive(Clone)]
+    struct Writer(Arc<std::sync::Mutex<Vec<u8>>>);
+    impl std::io::Write for Writer {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let output = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writer = Writer(output.clone());
+    let subscriber = tracing_subscriber::fmt()
+        .with_ansi(false)
+        .without_time()
+        .with_writer(move || writer.clone())
+        .finish();
+    let id = Uuid::new_v4();
+    tracing::subscriber::with_default(subscriber, || {
+        let mut retry = Retry::new(Duration::from_millis(200));
+        retry.delay(
+            Err(
+                anyhow::Error::from(sqlx::Error::Protocol("token=secret prompt=private".into()))
+                    .context("private context"),
+            ),
+            Some(id),
+            "sandbox_transport",
+        );
+        retry.delay(Ok(()), Some(id), "sandbox_transport");
+    });
+    let log = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+    assert!(log.contains(&id.to_string()), "{log}");
+    assert!(log.contains("database"), "{log}");
+    assert!(log.contains("sandbox_transport"), "{log}");
+    assert!(log.contains("recovered"), "{log}");
+    for private in ["secret", "private", "token=", "prompt="] {
+        assert!(!log.contains(private), "{log}");
+    }
+}
+
+#[tokio::test]
+async fn failed_inventory_read_preserves_workers_and_successful_empty_read_cancels_them(
+) -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let db = Database::open(&dir.path().join("local.sqlite3")).await?;
+    let service = Service::new(db, Registry::from_releases(vec![])?, 3600);
+    let id = Uuid::new_v4();
+    let (sender, mut receiver) = tokio::sync::oneshot::channel::<()>();
+    let task = tokio::spawn(async move {
+        let _sender = sender;
+        std::future::pending::<()>().await;
+    });
+    let task_id = task.id();
+    let mut workers = HashMap::from([(id, AbortOnDrop(task))]);
+    tokio::task::yield_now().await;
+    let model = Uuid::new_v4();
+    sqlx::query("INSERT INTO local_models(id,binding,model) VALUES(?,'{}','{}')")
+        .bind(model.to_string())
+        .execute(&service.db.pool)
+        .await?;
+    sqlx::query("INSERT INTO local_pi_sessions(id,model_id,provider) VALUES(?,?,'test')")
+        .bind(id.to_string())
+        .bind(model.to_string())
+        .execute(&service.db.pool)
+        .await?;
+    service.refresh_workers(&mut workers).await?;
+    assert_eq!(workers[&id].0.id(), task_id);
+    sqlx::query("ALTER TABLE local_pi_sessions RENAME TO unavailable_sessions")
+        .execute(&service.db.pool)
+        .await?;
+    let error = service.refresh_workers(&mut workers).await.unwrap_err();
+    assert_eq!(error_category(&error, "session_inventory"), "database");
+    assert_eq!(workers[&id].0.id(), task_id);
+    assert!(!workers[&id].0.is_finished());
+    assert_eq!(
+        receiver.try_recv(),
+        Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+    );
+
+    sqlx::query("ALTER TABLE unavailable_sessions RENAME TO local_pi_sessions")
+        .execute(&service.db.pool)
+        .await?;
+    service.refresh_workers(&mut workers).await?;
+    assert_eq!(workers[&id].0.id(), task_id);
+    sqlx::query("UPDATE local_pi_sessions SET desired='terminated' WHERE id=?")
+        .bind(id.to_string())
+        .execute(&service.db.pool)
+        .await?;
+    service.refresh_workers(&mut workers).await?;
+    assert!(workers.is_empty());
+    assert!(tokio::time::timeout(Duration::from_secs(1), receiver)
+        .await?
+        .is_err());
+    Ok(())
+}
+
 async fn request(app: &Router, method: &str, path: &str, body: Value) -> (StatusCode, Value) {
     let response = app
         .clone()
@@ -80,6 +230,8 @@ for line in sys.stdin:
         result={{'kind':'inference','value':{{'model':'model-beta','output':{{'message':{{'role':'assistant','content':'ANSWER_FROM_SELECTED_ENDPOINT'}},'usage':{{'prompt_tokens':2,'completion_tokens':3,'total_tokens':5}},'finish_reason':'stop'}}}}}}
     elif name=='sandbox_create': result={{'kind':'sandbox','value':{{'provider_id':'test-guest','status':'running','create_time_ms':1,'metadata':{{}}}}}}
     elif name=='sandbox_status': result={{'kind':'sandbox_status','value':'running'}}
+    elif name=='sandbox_exec_bounded' and pathlib.Path({transport_failure}).exists():
+        result={{'kind':'exec','value':{{'stdout':'','stderr':'private provider diagnostic','exit_code':1,'elapsed_ms':1,'timed_out':False,'truncated':False}}}}
     elif name=='sandbox_exec_bounded':
         assert len(op['args'])<=32 and all(len(a.encode())<=2048 for a in op['args'])
         args=[a.replace('/computer',guest) for a in op['args']]
@@ -102,6 +254,8 @@ for line in sys.stdin:
         manifest = serde_json::to_string(&manifest.to_string())?,
         guest = serde_json::to_string(&guest.to_string_lossy())?,
         events = serde_json::to_string(&dir.path().join("events").to_string_lossy())?,
+        transport_failure =
+            serde_json::to_string(&dir.path().join("transport-failure").to_string_lossy())?,
         runtime = serde_json::to_string(
             &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("../runtime")
@@ -154,6 +308,87 @@ async fn wait_tick(service: &Service, id: Uuid, expected: &str) -> Result<()> {
         );
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
+}
+
+#[tokio::test]
+async fn transport_failure_is_visible_and_recovers_without_recreating_the_agent() -> Result<()> {
+    let (dir, service) = fixture().await?;
+    let models = service.models().await?;
+    service
+        .select(models[1]["id"].as_str().unwrap().parse()?)
+        .await?;
+    let id = Uuid::new_v4();
+    let app = service.clone().router();
+    let (status, _) = request(
+        &app,
+        "POST",
+        "/v1/pi/workspaces",
+        json!({"provider":"test-local","idempotency_key":id}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    wait_tick(&service, id, "PI_READY").await?;
+
+    let fault = dir.path().join("transport-failure");
+    std::fs::write(&fault, "fail sandbox transport")?;
+    let worker = service.spawn_worker(id);
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let session = service.session(id).await?;
+            if session["transport"] == "unavailable" {
+                assert_eq!(session["error_category"], "sandbox_transport");
+                assert_eq!(session["generation"], 1);
+                break Ok::<_, anyhow::Error>(());
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await??;
+    std::fs::remove_file(fault)?;
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let session = service.session(id).await?;
+            if session["transport"].is_null() {
+                assert!(session["error_category"].is_null());
+                assert_eq!(session["generation"], 1);
+                break Ok::<_, anyhow::Error>(());
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await??;
+    drop(worker);
+    let events: Vec<Value> = std::fs::read_to_string(dir.path().join("events"))?
+        .lines()
+        .map(serde_json::from_str)
+        .collect::<std::result::Result<_, _>>()?;
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event["name"] == "sandbox_create")
+            .count(),
+        1
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event["name"] == "sandbox_exec_bounded"
+                && event["arguments"]["args"][1] == "start")
+            .count(),
+        1
+    );
+    assert_eq!(
+        request(
+            &app,
+            "POST",
+            &format!("/v1/pi/workspaces/{id}/terminate"),
+            json!({})
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    Ok(())
 }
 
 #[tokio::test]
