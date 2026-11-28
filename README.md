@@ -41,7 +41,35 @@ brew install useMagicMtn/tap/magic
 
 See the [CLI installation guide](https://magicmtn.ai/docs/cli-basics/#install) for more options.
 
-### Example: Remote inference (via Modal) with local isolation (via Apple Container)
+### Run your first local sandbox
+
+Install [Apple Container](https://github.com/apple/container#get-started).
+
+Start Apple Container and install the MagicMtn provider:
+
+```sh
+container system start
+magic provider install apple-container
+```
+
+If you previously signed in to MagicMtn Cloud, run `magic logout`. Start the local server in its own terminal and keep it open:
+
+```sh
+magic server start
+```
+
+In another terminal, prepare the bundled Canonical image, create a sandbox, run a command, and delete the sandbox:
+
+```sh
+magic images prepare canonical --provider apple-container
+sandbox_id=$(magic computer new --image canonical --provider apple-container)
+magic computer exec "$sandbox_id" -- /bin/echo "hello from the sandbox"
+magic computer terminate "$sandbox_id" --yes
+```
+
+The command result includes `hello from the sandbox`. Run `magic server stop` when finished. See the [local server guide](docs/local-server.md) for custom images, configuration, and cleanup.
+
+### Add inference with Modal and Pi
 
 Use Modal for inference while Pi works inside a MagicMtn Canonical [^1] VM on your Apple silicon Mac. MagicMtn manages Pi, the inference connection, and the sandbox lifecycle.
 
@@ -88,7 +116,7 @@ magic images prepare canonical --provider apple-container
 
 #### Run MagicMtn-managed Pi
 
-Install the MagicMtn Pi integration and open Pi:
+Install [Pi](documentation/docs/coding-agents/pi.md#install-pi), then install the MagicMtn Pi integration and open Pi:
 
 ```sh
 magic agents install pi
