@@ -6,6 +6,16 @@ MagicMtn runs your agents in sandboxes and uses a gateway to connect them to mod
 
 The sandbox backend supplies the execution boundary. Installed providers and the MagicMtn server run outside that boundary and manage the resources and account connections used by agents.
 
+## Installation count
+
+The shell installer sends an empty request after successful installation to increment an aggregate counter. Reinstallations count again. The event contains no user or installation identifier, OS, version, or command-usage data. The server receives normal HTTP connection metadata, including the source IP address. CLI error reporting is separately opt-in.
+
+Set `MAGIC_NO_INSTALL_ANALYTICS=1` for the installer to skip the count request:
+
+```sh
+curl -fsSL https://magicmtn.ai/install.sh | MAGIC_NO_INSTALL_ANALYTICS=1 sh
+```
+
 ## Cloud credentials and the gateway {#credentials-and-the-gateway}
 
 In MagicMtn Cloud, the gateway forwards model requests using the inference connection you selected. Provider API keys connected through MagicMtn stay outside the sandbox; the agent receives a scoped credential for its session. Connected inference keys are encrypted at rest, and the gateway checks access before forwarding requests.

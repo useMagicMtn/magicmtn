@@ -282,7 +282,7 @@ class ReleaseTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("absolute path", result.stderr)
 
-    def installer(self, signed=None, binary=None, installed=b"old installation\n", consent="--no-modify-shell", directory=None):
+    def installer(self, signed=None, binary=None, installed=b"old installation\n", consent="--no-modify-shell", directory=None, no_analytics=None):
         home = self.root / ("home-" + str(time.monotonic_ns()))
         home.mkdir()
         target = Path(directory) if directory else home / ".local/bin"
@@ -291,7 +291,7 @@ class ReleaseTest(unittest.TestCase):
         tools = self.root / "tools"
         tools.mkdir(exist_ok=True)
         (tools / "uname").write_text("#!/bin/sh\n[ \"$1\" = -s ] && echo Linux || echo x86_64\n")
-        (tools / "curl").write_text("#!/bin/sh\ncase \"$2\" in */latest.signed.json) cp \"$FIXTURE_DIR/latest.signed.json\" \"$4\";; */releases/1.1.2/magic-linux-x86_64) cp \"$FIXTURE_DIR/binary\" \"$4\";; *) exit 5;; esac\n")
+        (tools / "curl").write_text("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$HOME/curl-calls\"\ncase \"$2\" in */latest.signed.json) cp \"$FIXTURE_DIR/latest.signed.json\" \"$4\";; */releases/1.1.2/magic-linux-x86_64) cp \"$FIXTURE_DIR/binary\" \"$4\";; *) exit 5;; esac\n")
         for path in tools.iterdir():
             path.chmod(0o755)
         fixture = self.root / "fixture"
@@ -301,10 +301,24 @@ class ReleaseTest(unittest.TestCase):
         script = self.root / "install.sh"
         script.write_text(release.render_installer(self.configuration))
         env = {**os.environ, "HOME": str(home), "PATH": str(tools) + os.pathsep + os.environ["PATH"], "FIXTURE_DIR": str(fixture)}
+        env.pop("MAGIC_NO_INSTALL_ANALYTICS", None)
+        if no_analytics is not None:
+            env["MAGIC_NO_INSTALL_ANALYTICS"] = no_analytics
         if directory:
             env["MAGIC_INSTALL_DIR"] = str(directory)
         result = subprocess.run(["sh", str(script), *([consent] if consent else [])], env=env, capture_output=True, text=True)
         return result, home, target
+
+    def test_installer_analytics_opt_out_skips_only_the_completion_request(self):
+        for value in (None, "", "0", "1"):
+            with self.subTest(no_analytics=value):
+                result, home, target = self.installer(no_analytics=value)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual((target / "magic").read_bytes(), self.binary)
+                calls = (home / "curl-calls").read_text().splitlines()
+                self.assertEqual(sum("/install-completed" in call for call in calls), 0 if value == "1" else 1)
+                self.assertEqual(sum("/latest.signed.json" in call for call in calls), 1)
+                self.assertEqual(sum("/releases/1.1.2/magic-linux-x86_64" in call for call in calls), 1)
 
     def test_installer_authenticates_before_execution_and_preserves_existing_binary(self):
         attacks = [json.dumps(self.payload), self.signed.replace('"signature":"', '"signature":"AAAA'),
